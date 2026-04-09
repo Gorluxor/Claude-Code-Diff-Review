@@ -18,11 +18,17 @@ import json
 import os
 import socket
 import struct
+import sys
 import threading
 import urllib.request
 import urllib.error
 from pathlib import Path
 from typing import Optional
+
+
+def _dbg(msg: str) -> None:
+    sys.stderr.write(f"[diff-review:ide] {msg}\n")
+    sys.stderr.flush()
 
 
 def find_ide_server() -> Optional[dict]:
@@ -40,30 +46,41 @@ def find_ide_server() -> Optional[dict]:
     """
     ide_dir = Path.home() / ".claude" / "ide"
     if not ide_dir.exists():
+        _dbg(f"IDE dir not found: {ide_dir}")
         return None
 
     cwd = str(Path.cwd().resolve())
+    _dbg(f"Looking for IDE server matching CWD: {cwd}")
     best = None
 
     for lock_file in sorted(ide_dir.glob("*.lock")):
         try:
             port = int(lock_file.stem)
             data = json.loads(lock_file.read_text())
+            transport = data.get("transport", "sse")
+            workspaces = data.get("workspaceFolders", [])
+            _dbg(f"  Found lock: port={port} transport={transport} workspaces={workspaces}")
             entry = {
                 "port": port,
-                "transport": data.get("transport", "sse"),
+                "transport": transport,
                 "auth_token": data.get("authToken"),
                 "ide_name": data.get("ideName", "IDE"),
             }
             # Prefer server whose workspace matches CWD
             if any(cwd.startswith(str(Path(w).resolve()))
-                   for w in data.get("workspaceFolders", [])):
+                   for w in workspaces):
+                _dbg(f"  → Matched CWD, using port {port}")
                 return entry
             if best is None:
                 best = entry
-        except Exception:
+        except Exception as e:
+            _dbg(f"  Error reading {lock_file}: {e}")
             continue
 
+    if best:
+        _dbg(f"No CWD match — falling back to port {best['port']}")
+    else:
+        _dbg("No IDE lock files found")
     return best
 
 
@@ -85,10 +102,12 @@ def _ws_open_diff_in_ide(
     port = server["port"]
     auth = server.get("auth_token")
 
+    _dbg(f"WS: connecting to port {port} (auth={'yes' if auth else 'no'})")
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(10)
         sock.connect(("localhost", port))
+        _dbg("WS: TCP connected")
 
         # ── HTTP → WebSocket upgrade ──────────────────────────────────────
         ws_key = base64.b64encode(os.urandom(16)).decode()
@@ -112,8 +131,10 @@ def _ws_open_diff_in_ide(
             buf += chunk
 
         if b" 101 " not in buf:
+            _dbg(f"WS: upgrade failed — response: {buf[:200]!r}")
             sock.close()
             return None
+        _dbg("WS: upgrade OK (101 Switching Protocols)")
 
         # ── Frame send/recv helpers ───────────────────────────────────────
 
@@ -182,6 +203,7 @@ def _ws_open_diff_in_ide(
                     pass
 
         # ── MCP initialize handshake ──────────────────────────────────────
+        _dbg("WS: sending MCP initialize")
         init = rpc({
             "jsonrpc": "2.0",
             "method": "initialize",
@@ -193,8 +215,10 @@ def _ws_open_diff_in_ide(
             "id": 1,
         })
         if "error" in init:
+            _dbg(f"WS: MCP initialize error: {init['error']}")
             sock.close()
             return None
+        _dbg("WS: MCP initialized OK")
 
         send_text(json.dumps({
             "jsonrpc": "2.0",
@@ -203,6 +227,7 @@ def _ws_open_diff_in_ide(
         }))
 
         # ── openDiff call — block until user acts ─────────────────────────
+        _dbg(f"WS: calling openDiff — old={old_file_path!r} new={new_file_path!r} tab={tab_name!r}")
         sock.settimeout(timeout)
         resp = rpc({
             "jsonrpc": "2.0",
@@ -218,6 +243,7 @@ def _ws_open_diff_in_ide(
             "id": 2,
         })
         sock.close()
+        _dbg(f"WS: openDiff response: {json.dumps(resp)[:300]}")
 
         content = (
             resp.get("result", {}).get("content", [])
@@ -228,11 +254,14 @@ def _ws_open_diff_in_ide(
             if isinstance(item, dict) and item.get("type") == "text":
                 val = item["text"].strip()
                 if val in ("FILE_SAVED", "DIFF_REJECTED", "TAB_CLOSED"):
+                    _dbg(f"WS: openDiff result = {val}")
                     return val
 
+        _dbg(f"WS: no recognized result in response content: {content}")
         return None
 
-    except Exception:
+    except Exception as e:
+        _dbg(f"WS: exception: {e!r}")
         try:
             sock.close()
         except Exception:
@@ -262,6 +291,7 @@ def open_diff_in_ide(
 
     Returns: "FILE_SAVED" | "DIFF_REJECTED" | "TAB_CLOSED" | None
     """
+    _dbg(f"open_diff_in_ide: transport={server.get('transport')} port={server.get('port')}")
     if server.get("transport") == "ws":
         return _ws_open_diff_in_ide(server, old_file_path, new_file_path, tab_name, timeout)
 
