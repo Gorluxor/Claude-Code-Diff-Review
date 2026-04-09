@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.1.5] - 2026-04-09
+
+### Added
+
+- **First-run setup wizard** — on the very first session start (before Claude begins), an interactive prompt asks you to choose your review mode and scope. No LLM tokens used.
+- **`claude-diff reconfigure`** — re-run the setup wizard at any time to change your preferences.
+
+---
+
 ## [0.1.4] - 2026-04-09
 
 ### Added
