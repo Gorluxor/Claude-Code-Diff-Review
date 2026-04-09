@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.0] - 2026-04-09
+
+### Added
+
+- add stderr debug logging to ide.py for connection troubleshooting
+
+---
+
+
 ## [0.3.3] - 2026-04-09
 
 ### Fixed
