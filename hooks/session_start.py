@@ -21,6 +21,7 @@ from lib.state import (
     save_state,
     cleanup_old_sessions,
     get_session_dir,
+    check_shadow_dir_permissions,
 )
 
 
@@ -42,6 +43,16 @@ def main():
         state["edited_files"] = {}
         state["shadow_created"] = []
         state["previewed_files"] = []
+        save_state(state)
+
+    # Verify the shadow directory is readable and writable
+    perm_ok, perm_err = check_shadow_dir_permissions()
+    if not perm_ok:
+        sys.stderr.write(
+            f"[diff-review] ⚠  Shadow directory not accessible: {perm_err}\n"
+            "[diff-review] Diff tracking disabled for this session.\n"
+        )
+        state["mode"] = "auto"
         save_state(state)
 
     session_dir = get_session_dir()

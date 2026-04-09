@@ -37,7 +37,6 @@ from lib.state import (
     restore_all,
     cleanup_session,
     cleanup_old_sessions,
-    resolve_conflict_markers,
 )
 
 
@@ -80,7 +79,7 @@ def load_config() -> dict:
         except Exception:
             pass
     return {
-        "review_mode": "interactive",  # interactive, vscode, terminal, summary
+        "review_mode": "vscode",    # vscode, terminal, summary
         "auto_cleanup": True,       # clean shadow after accept
         "review_scope": "session",  # session (all at Stop) or file (progressive)
     }
@@ -305,71 +304,27 @@ def cmd_config(args):
 
 def cmd_finalize(args):
     """
-    Resolve any remaining conflict markers in tracked files.
+    Run interactive review for the current session without re-engaging Claude.
 
-    Use after interactive review if you closed VS Code before pressing Enter,
-    or to finalize without re-engaging Claude.
-    Unresolved markers → original side kept (rejection).
+    Use this to review tracked edits outside of the normal Stop hook flow,
+    or to review changes without looping back to Claude on rejection.
+    Accepts/rejects per hunk; rejected hunks are restored to original.
+    Claude is NOT notified of rejections — describe them manually to re-engage.
     """
     edited = get_edited_files()
     if not edited:
-        print(f"{DIM}No tracked edits to finalize.{RESET}")
+        print(f"{DIM}No tracked edits to review.{RESET}")
         return
+
+    # Import review entry point from stop hook
+    hooks_dir = INSTALL_DIR / "hooks"
+    sys.path.insert(0, str(hooks_dir))
+    from stop import run_interactive_review  # noqa: PLC0415
 
     state = load_state()
-    conflict_counts = state.get("conflict_counts", {})
+    run_interactive_review(edited, state, re_engage=False)
+    # run_interactive_review calls sys.exit internally
 
-    total_accepted = 0
-    total_rejected = 0
-    any_markers = False
-
-    for abs_path in sorted(edited):
-        real = Path(abs_path)
-        rel = format_path(abs_path)
-
-        if not real.exists():
-            continue
-
-        try:
-            content = real.read_text(errors="replace")
-        except Exception:
-            continue
-
-        if "<<<<<<< original" not in content:
-            continue
-
-        any_markers = True
-        result = resolve_conflict_markers(real)
-        rejected = result["rejected"]
-        total_hunks = conflict_counts.get(abs_path, rejected)
-        accepted = total_hunks - rejected
-
-        total_accepted += accepted
-        total_rejected += rejected
-
-        if rejected:
-            print(
-                f"  {YELLOW}↺{RESET} {BOLD}{rel}{RESET}  "
-                f"{GREEN}+{accepted} accepted{RESET}  {RED}-{rejected} rejected{RESET}"
-            )
-        else:
-            print(f"  {GREEN}✓{RESET} {BOLD}{rel}{RESET}  {DIM}(all accepted){RESET}")
-
-    if not any_markers:
-        print(f"{DIM}No conflict markers found — nothing to finalize.{RESET}")
-        print(f"{DIM}(Did interactive review already complete?){RESET}")
-        return
-
-    print(
-        f"\n{BOLD}Done.{RESET}  "
-        f"{GREEN}+{total_accepted} accepted{RESET}  {RED}-{total_rejected} rejected{RESET}"
-    )
-    if total_rejected:
-        print(
-            f"\n{DIM}Note: Claude has not been notified of the rejections.{RESET}\n"
-            f"{DIM}To re-engage Claude manually, describe what you rejected.{RESET}"
-        )
-    print(f"{DIM}Run {BOLD}claude-diff accept{RESET}{DIM} to clean up shadow copies.{RESET}")
 
 
 def cmd_cleanup(args):
@@ -536,7 +491,7 @@ def main():
   claude-diff restore          Reject all changes
   claude-diff restore src/x.py Reject changes to one file
   claude-diff accept           Accept all changes, clean up
-  claude-diff finalize         Resolve conflict markers after interactive review
+  claude-diff finalize         Run interactive per-hunk review (no Claude re-engagement)
         """
     )
 
@@ -562,11 +517,15 @@ def main():
     p_config.add_argument("key", nargs="?", help="Config key")
     p_config.add_argument("value", nargs="?", help="New value")
 
+
+
+
     # finalize
     subs.add_parser(
         "finalize",
         help="Resolve remaining conflict markers (use after interactive review)",
     )
+
 
     # cleanup
     subs.add_parser("cleanup", help="Remove all sessions and shadow data")

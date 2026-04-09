@@ -5,8 +5,6 @@ Manages the shadow directory, edit tracking, and session lifecycle.
 All state is stored in a session-specific temp directory to avoid conflicts
 between concurrent Claude Code sessions.
 """
-
-import difflib
 import json
 import os
 import shutil
@@ -78,7 +76,6 @@ def load_state() -> dict:
         "binary_files": [],       # paths detected as binary
         "new_files": [],          # paths that didn't exist before
         "previewed_files": [],    # paths already opened in VS Code (file scope)
-        "conflict_counts": {},    # path -> total conflict hunk count (interactive mode)
         "session_start": None,
         "auto_open_diff": True,   # open VS Code diffs automatically on Stop
         "mode": "review",         # "review" = show diffs, "auto" = skip diffs
@@ -182,105 +179,6 @@ def get_edited_files() -> dict:
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Conflict marker support (interactive review mode)
-# ──────────────────────────────────────────────────────────────────────
-
-def write_conflict_markers(shadow_path: Path, real_path: Path) -> int:
-    """
-    Rewrite real_path in-place with Git-style conflict markers showing
-    the original (shadow) vs Claude's edited version side by side.
-
-    VS Code renders these blocks with inline Accept/Reject buttons.
-    Returns the number of conflict hunks written (0 = no diff).
-    """
-    try:
-        old_lines = (
-            shadow_path.read_text(errors="replace").splitlines(True)
-            if shadow_path.exists()
-            else []
-        )
-        new_lines = real_path.read_text(errors="replace").splitlines(True)
-    except Exception:
-        return 0
-
-    sm = difflib.SequenceMatcher(None, old_lines, new_lines, autojunk=False)
-    result = []
-    conflict_count = 0
-
-    for tag, i1, i2, j1, j2 in sm.get_opcodes():
-        if tag == "equal":
-            result.extend(new_lines[j1:j2])
-        else:
-            conflict_count += 1
-            result.append("<<<<<<< original\n")
-            result.extend(old_lines[i1:i2])
-            result.append("=======\n")
-            result.extend(new_lines[j1:j2])
-            result.append(">>>>>>> claude\n")
-
-    if conflict_count == 0:
-        return 0
-
-    real_path.write_text("".join(result))
-    return conflict_count
-
-
-def resolve_conflict_markers(real_path: Path) -> dict:
-    """
-    Scan real_path for remaining (unresolved) conflict markers.
-
-    VS Code removes markers when the user clicks Accept/Reject; any
-    markers still present means the user didn't decide → we treat that
-    as a rejection and restore the original side.
-
-    Returns:
-        {
-            "rejected": int,
-            "rejected_hunks": [{"original": str, "claude": str}, ...]
-        }
-    The file is rewritten in-place with all markers removed.
-    """
-    try:
-        content = real_path.read_text(errors="replace")
-    except Exception:
-        return {"rejected": 0, "rejected_hunks": []}
-
-    if "<<<<<<< original" not in content:
-        return {"rejected": 0, "rejected_hunks": []}
-
-    lines = content.splitlines(True)
-    result = []
-    rejected_hunks = []
-
-    i = 0
-    while i < len(lines):
-        line = lines[i].rstrip("\n\r")
-        if line == "<<<<<<< original":
-            orig_lines, claude_lines = [], []
-            i += 1
-            while i < len(lines) and lines[i].rstrip("\n\r") != "=======":
-                orig_lines.append(lines[i])
-                i += 1
-            i += 1  # skip =======
-            while i < len(lines) and lines[i].rstrip("\n\r") != ">>>>>>> claude":
-                claude_lines.append(lines[i])
-                i += 1
-            i += 1  # skip >>>>>>>
-            # Unresolved → keep original, discard Claude's version
-            result.extend(orig_lines)
-            rejected_hunks.append({
-                "original": "".join(orig_lines),
-                "claude": "".join(claude_lines),
-            })
-        else:
-            result.append(lines[i])
-            i += 1
-
-    real_path.write_text("".join(result))
-    return {"rejected": len(rejected_hunks), "rejected_hunks": rejected_hunks}
-
-
-# ──────────────────────────────────────────────────────────────────────
 # Restoration
 # ──────────────────────────────────────────────────────────────────────
 
@@ -313,6 +211,28 @@ def restore_all() -> list:
         if restore_file(path):
             restored.append(path)
     return restored
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Permission checks
+# ──────────────────────────────────────────────────────────────────────
+
+def check_shadow_dir_permissions() -> tuple:
+    """
+    Verify the shadow directory is readable and writable.
+
+    Returns (ok: bool, error_message: str).
+    Creates the directory as a side-effect if it doesn't exist yet.
+    """
+    try:
+        shadow = get_shadow_dir()
+        test_file = shadow / ".write_test"
+        test_file.write_text("ok")
+        _ = test_file.read_text()
+        test_file.unlink()
+        return True, ""
+    except (OSError, PermissionError) as exc:
+        return False, str(exc)
 
 
 # ──────────────────────────────────────────────────────────────────────
