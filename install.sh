@@ -107,7 +107,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
     mkdir -p "$CONFIG_DIR"
     cat > "$CONFIG_FILE" << 'EOF'
 {
-  "review_mode": "vscode",
+  "review_mode": "interactive",
   "auto_cleanup": true,
   "review_scope": "session"
 }

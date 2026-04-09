@@ -37,6 +37,7 @@ from lib.state import (
     restore_all,
     cleanup_session,
     cleanup_old_sessions,
+    resolve_conflict_markers,
 )
 
 
@@ -79,7 +80,7 @@ def load_config() -> dict:
         except Exception:
             pass
     return {
-        "review_mode": "vscode",    # vscode, terminal, summary
+        "review_mode": "interactive",  # interactive, vscode, terminal, summary
         "auto_cleanup": True,       # clean shadow after accept
         "review_scope": "session",  # session (all at Stop) or file (progressive)
     }
@@ -294,10 +295,81 @@ def cmd_config(args):
         for k, v in config.items():
             print(f"  {k} = {BOLD}{v}{RESET}")
         print()
-        print(f"{DIM}  review_mode:  vscode | terminal | summary{RESET}")
+        print(f"{DIM}  review_mode:  vscode | terminal | summary | interactive{RESET}")
+        print(f"{DIM}    interactive — write conflict markers, open in VS Code, wait for{RESET}")
+        print(f"{DIM}                  Accept/Reject per hunk; re-engages Claude on rejection{RESET}")
         print(f"{DIM}  review_scope: session (all diffs at Stop) | "
               f"file (progressive, per-file as Claude works){RESET}")
         print(f"{DIM}  auto_cleanup: true | false{RESET}\n")
+
+
+def cmd_finalize(args):
+    """
+    Resolve any remaining conflict markers in tracked files.
+
+    Use after interactive review if you closed VS Code before pressing Enter,
+    or to finalize without re-engaging Claude.
+    Unresolved markers → original side kept (rejection).
+    """
+    edited = get_edited_files()
+    if not edited:
+        print(f"{DIM}No tracked edits to finalize.{RESET}")
+        return
+
+    state = load_state()
+    conflict_counts = state.get("conflict_counts", {})
+
+    total_accepted = 0
+    total_rejected = 0
+    any_markers = False
+
+    for abs_path in sorted(edited):
+        real = Path(abs_path)
+        rel = format_path(abs_path)
+
+        if not real.exists():
+            continue
+
+        try:
+            content = real.read_text(errors="replace")
+        except Exception:
+            continue
+
+        if "<<<<<<< original" not in content:
+            continue
+
+        any_markers = True
+        result = resolve_conflict_markers(real)
+        rejected = result["rejected"]
+        total_hunks = conflict_counts.get(abs_path, rejected)
+        accepted = total_hunks - rejected
+
+        total_accepted += accepted
+        total_rejected += rejected
+
+        if rejected:
+            print(
+                f"  {YELLOW}↺{RESET} {BOLD}{rel}{RESET}  "
+                f"{GREEN}+{accepted} accepted{RESET}  {RED}-{rejected} rejected{RESET}"
+            )
+        else:
+            print(f"  {GREEN}✓{RESET} {BOLD}{rel}{RESET}  {DIM}(all accepted){RESET}")
+
+    if not any_markers:
+        print(f"{DIM}No conflict markers found — nothing to finalize.{RESET}")
+        print(f"{DIM}(Did interactive review already complete?){RESET}")
+        return
+
+    print(
+        f"\n{BOLD}Done.{RESET}  "
+        f"{GREEN}+{total_accepted} accepted{RESET}  {RED}-{total_rejected} rejected{RESET}"
+    )
+    if total_rejected:
+        print(
+            f"\n{DIM}Note: Claude has not been notified of the rejections.{RESET}\n"
+            f"{DIM}To re-engage Claude manually, describe what you rejected.{RESET}"
+        )
+    print(f"{DIM}Run {BOLD}claude-diff accept{RESET}{DIM} to clean up shadow copies.{RESET}")
 
 
 def cmd_cleanup(args):
@@ -464,6 +536,7 @@ def main():
   claude-diff restore          Reject all changes
   claude-diff restore src/x.py Reject changes to one file
   claude-diff accept           Accept all changes, clean up
+  claude-diff finalize         Resolve conflict markers after interactive review
         """
     )
 
@@ -489,6 +562,12 @@ def main():
     p_config.add_argument("key", nargs="?", help="Config key")
     p_config.add_argument("value", nargs="?", help="New value")
 
+    # finalize
+    subs.add_parser(
+        "finalize",
+        help="Resolve remaining conflict markers (use after interactive review)",
+    )
+
     # cleanup
     subs.add_parser("cleanup", help="Remove all sessions and shadow data")
 
@@ -508,6 +587,7 @@ def main():
         "restore": cmd_restore,
         "diff": cmd_diff,
         "config": cmd_config,
+        "finalize": cmd_finalize,
         "cleanup": cmd_cleanup,
         "install": cmd_install,
         "uninstall": cmd_uninstall,

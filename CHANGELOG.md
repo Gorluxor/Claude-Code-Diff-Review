@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.1.3] - 2026-04-09
+
+### Added
+
+- **Interactive review mode** (`review_mode: "interactive"`) — replaces passive diff viewing with a GitHub Copilot-style per-hunk accept/reject workflow:
+  - Stop hook rewrites each changed file in-place with Git conflict markers (`<<<<<<< original` / `=======` / `>>>>>>> claude`)
+  - VS Code opens every changed file; inline **Accept Incoming** / **Accept Current** buttons appear per hunk
+  - Terminal waits for Enter; resolves remaining (unresolved) markers by restoring the original side
+  - If any hunks were rejected, the Stop hook outputs `{"decision": "block", "reason": "..."}` to re-engage Claude with a structured summary of exactly what was rejected and why
+- **`claude-diff finalize`** — standalone conflict resolver for when VS Code is closed before pressing Enter, or when you want to finalize without looping back to Claude; prints accepted/rejected counts per file
+- `interactive` is now the **default `review_mode`** for new installs
+
+### Changed
+
+- `install.sh` default config changed from `review_mode: "vscode"` to `review_mode: "interactive"`
+- `bin/claude-diff` `load_config()` default changed to `"interactive"`
+- `claude-diff config` legend now documents the `interactive` mode
+
+### Internal
+
+- `lib/state.py`: added `import difflib`; added `"conflict_counts": {}` to session state defaults; new `write_conflict_markers(shadow, real) -> int` and `resolve_conflict_markers(real) -> dict` functions
+- `hooks/stop.py`: added `import json`; imports `write_conflict_markers`, `resolve_conflict_markers`; new `run_interactive_review()` and `_build_rejection_message()` functions; `main()` dispatches to interactive branch before the existing vscode/terminal/summary flow
+
+---
+
 ## [0.1.2] - 2026-04-09
 
 ### Added

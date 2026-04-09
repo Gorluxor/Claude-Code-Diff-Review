@@ -15,6 +15,7 @@ Exit codes:
   0 = allow stop (don't force continuation)
 """
 
+import json
 import sys
 import os
 import subprocess
@@ -32,6 +33,8 @@ from lib.state import (
     save_state,
     cleanup_session,
     is_binary_file,
+    write_conflict_markers,
+    resolve_conflict_markers,
 )
 
 
@@ -161,6 +164,169 @@ def print_summary_header(edited_files: dict):
     sys.stderr.write(f"{BOLD}{MAGENTA}{'─' * 60}{RESET}\n\n")
 
 
+def _build_rejection_message(all_rejections: dict, conflict_counts: dict) -> str:
+    """Build the re-engagement message Claude sees after the user rejects hunks."""
+    lines = [
+        "The user reviewed your changes interactively and rejected some of them.",
+        "",
+        "## What was rejected",
+        "",
+    ]
+
+    for abs_path, result in all_rejections.items():
+        rel = format_path(abs_path)
+        total = conflict_counts.get(abs_path, len(result["rejected_hunks"]))
+        accepted = total - result["rejected"]
+        lines.append(
+            f"**{rel}** — {accepted}/{total} hunks accepted, "
+            f"{result['rejected']} rejected"
+        )
+
+    lines += ["", "## Rejected hunks (original was kept)", ""]
+
+    for abs_path, result in all_rejections.items():
+        rel = format_path(abs_path)
+        lines.append(f"### {rel}")
+        for i, hunk in enumerate(result["rejected_hunks"], 1):
+            lines.append(f"\nHunk {i} — user kept original instead of your change:")
+            if hunk["original"].strip():
+                lines.append("Original (kept):")
+                for ln in hunk["original"].splitlines():
+                    lines.append(f"  {ln}")
+            else:
+                lines.append("  Original: (empty — your addition was removed)")
+            lines.append("Your proposed change (rejected):")
+            if hunk["claude"].strip():
+                for ln in hunk["claude"].splitlines():
+                    lines.append(f"  {ln}")
+            else:
+                lines.append("  (empty — your deletion was reverted)")
+        lines.append("")
+
+    lines += [
+        "Please ask the user what they'd prefer for the rejected hunks, "
+        "or proceed if you understand why they were rejected.",
+    ]
+    return "\n".join(lines)
+
+
+def run_interactive_review(edited_files: dict, state: dict) -> None:
+    """
+    Interactive review mode:
+      1. Rewrite each changed file with Git conflict markers.
+      2. Open the files in VS Code (inline Accept/Reject buttons per hunk).
+      3. Wait for the user to press Enter.
+      4. Resolve remaining (unresolved) markers → reject → restore original.
+      5. If any rejections: output block JSON to re-engage Claude.
+    """
+    sys.stderr.write(f"\n{BOLD}{MAGENTA}{'─' * 60}{RESET}\n")
+    sys.stderr.write(f"{BOLD}{MAGENTA}  ◆ claude-diff-review — interactive review{RESET}\n")
+    sys.stderr.write(
+        f"{DIM}  {len(edited_files)} file(s) to review{RESET}\n"
+    )
+    sys.stderr.write(f"{BOLD}{MAGENTA}{'─' * 60}{RESET}\n\n")
+
+    files_with_markers = {}  # abs_path -> conflict count
+    vscode_ok = True
+
+    for abs_path in sorted(edited_files):
+        real = Path(abs_path)
+        shadow = get_shadow_path(abs_path)
+        rel = format_path(abs_path)
+
+        if not real.exists() or abs_path in state.get("binary_files", []):
+            sys.stderr.write(f"  {DIM}skip  {rel} (binary or deleted){RESET}\n")
+            continue
+
+        count = write_conflict_markers(shadow, real)
+        if count == 0:
+            sys.stderr.write(f"  {DIM}–     {rel} (no diff){RESET}\n")
+            continue
+
+        files_with_markers[abs_path] = count
+        sys.stderr.write(
+            f"  {CYAN}↯{RESET}  {BOLD}{rel}{RESET}  "
+            f"{DIM}({count} conflict{'s' if count != 1 else ''}){RESET}\n"
+        )
+
+        if vscode_ok:
+            try:
+                subprocess.Popen(
+                    ["code", abs_path],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except FileNotFoundError:
+                vscode_ok = False
+
+    if not files_with_markers:
+        sys.exit(0)
+
+    # Persist conflict counts so `claude-diff finalize` can compute accepted %
+    state["conflict_counts"] = files_with_markers
+    save_state(state)
+
+    sys.stderr.write(f"\n")
+    if vscode_ok:
+        sys.stderr.write(f"  {BOLD}VS Code opened.{RESET} Resolve each conflict inline:\n")
+        sys.stderr.write(f"  {GREEN}Accept Incoming Change{RESET} → keep Claude's version\n")
+        sys.stderr.write(f"  {RED}Accept Current Change{RESET}  → revert to original\n")
+    else:
+        sys.stderr.write(
+            f"  {YELLOW}⚠ VS Code CLI not found.{RESET} "
+            f"Resolve markers manually, then run:\n"
+            f"  {BOLD}claude-diff finalize{RESET}\n"
+        )
+
+    sys.stderr.write(
+        f"\n  {BOLD}Press Enter when you've finished reviewing...{RESET}\n"
+    )
+    sys.stderr.flush()
+
+    try:
+        with open("/dev/tty") as tty:
+            tty.readline()
+    except Exception:
+        pass  # non-interactive environment — fall through immediately
+
+    # Resolve remaining markers
+    all_rejections = {}
+    total_rejected = 0
+
+    sys.stderr.write(f"\n")
+    for abs_path, total_hunks in files_with_markers.items():
+        rel = format_path(abs_path)
+        result = resolve_conflict_markers(Path(abs_path))
+        rejected = result["rejected"]
+        accepted = total_hunks - rejected
+        total_rejected += rejected
+
+        if rejected:
+            all_rejections[abs_path] = result
+            sys.stderr.write(
+                f"  {YELLOW}↺{RESET}  {BOLD}{rel}{RESET}  "
+                f"{GREEN}+{accepted} accepted{RESET}  {RED}-{rejected} rejected{RESET}\n"
+            )
+        else:
+            sys.stderr.write(
+                f"  {GREEN}✓{RESET}  {BOLD}{rel}{RESET}  {DIM}all accepted{RESET}\n"
+            )
+
+    total_conflict_hunks = sum(files_with_markers.values())
+    total_accepted = total_conflict_hunks - total_rejected
+    sys.stderr.write(
+        f"\n{DIM}  {total_accepted} accepted, {total_rejected} rejected "
+        f"across {len(files_with_markers)} file(s){RESET}\n"
+    )
+    sys.stderr.write(f"{DIM}{'─' * 60}{RESET}\n\n")
+
+    if all_rejections:
+        reason = _build_rejection_message(all_rejections, files_with_markers)
+        print(json.dumps({"decision": "block", "reason": reason}))
+
+    sys.exit(0)
+
+
 def main():
     state = load_state()
 
@@ -186,6 +352,10 @@ def main():
 
     # Also check env var override
     review_mode = os.environ.get("CLAUDE_DIFF_MODE", review_mode)
+
+    if review_mode == "interactive":
+        run_interactive_review(edited_files, state)
+        # run_interactive_review exits internally
 
     print_summary_header(edited_files)
 
