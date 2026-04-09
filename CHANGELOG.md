@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.2] - 2026-04-09
+
+### Fixed
+
+- clarify VS Code diff UX — Ctrl+S to accept, Revert to reject hunks
+
+---
+
+
 ## [0.2.1] - 2026-04-09
 
 ### Fixed
