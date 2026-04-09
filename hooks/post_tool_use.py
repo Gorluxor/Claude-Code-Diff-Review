@@ -20,10 +20,14 @@ from lib.state import (
     extract_file_path,
     record_edit,
     load_state,
+    is_paused,
 )
 
 
 def main():
+    if is_paused():
+        sys.exit(0)
+
     hook_input = read_hook_input()
     file_path = extract_file_path(hook_input)
 

@@ -30,6 +30,7 @@ from lib.state import (
     load_state,
     save_state,
     get_shadow_path,
+    is_paused,
 )
 
 
@@ -52,6 +53,10 @@ def _open_vscode_diff_bg(abs_path: str) -> None:
 
 
 def main():
+    if is_paused():
+        hook_allow("claude-diff-review paused")
+        return
+
     hook_input = read_hook_input()
     file_path = extract_file_path(hook_input)
 

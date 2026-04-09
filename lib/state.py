@@ -214,6 +214,21 @@ def restore_all() -> list:
 
 
 # ──────────────────────────────────────────────────────────────────────
+# Pause / resume
+# ──────────────────────────────────────────────────────────────────────
+
+def is_paused() -> bool:
+    """Return True if diff tracking is globally paused via config."""
+    config_path = Path.home() / ".claude-diff-review" / "config.json"
+    try:
+        if config_path.exists():
+            return json.loads(config_path.read_text()).get("paused", False)
+    except (OSError, json.JSONDecodeError):
+        pass
+    return False
+
+
+# ──────────────────────────────────────────────────────────────────────
 # Permission checks
 # ──────────────────────────────────────────────────────────────────────
 

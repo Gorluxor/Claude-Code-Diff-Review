@@ -14,6 +14,14 @@ python3 tests/test_e2e.py
 
 The e2e test simulates the full hook lifecycle (SessionStart → PreToolUse → edit → PostToolUse → Stop) against a temporary directory. No external dependencies required.
 
+To enforce tests locally before every push:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+CI also runs tests on every push and blocks the release job if they fail (`.github/workflows/release.yml`).
+
 ## Architecture
 
 ```

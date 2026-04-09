@@ -26,6 +26,7 @@ from lib.state import (
     cleanup_old_sessions,
     get_session_dir,
     check_shadow_dir_permissions,
+    is_paused,
 )
 
 
@@ -137,6 +138,11 @@ def main():
         _ensure_config()
     except Exception:
         pass  # never block Claude
+
+    # If globally paused, emit a minimal context note and exit
+    if is_paused():
+        print(json.dumps({"additionalContext": "[claude-diff-review is paused]"}))
+        sys.exit(0)
 
     # Clean up old sessions (non-blocking, best-effort)
     try:

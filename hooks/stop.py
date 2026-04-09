@@ -36,6 +36,7 @@ from lib.state import (
     get_shadow_path,
     get_working_dir,
     load_state,
+    is_paused,
 )
 
 
@@ -575,6 +576,9 @@ def run_interactive_review(
 # ──────────────────────────────────────────────────────────────────────
 
 def main():
+    if is_paused():
+        sys.exit(0)
+
     state = load_state()
 
     if state.get("mode") == "auto":

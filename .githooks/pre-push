@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Run e2e tests before push to catch regressions locally.
+# Enable with: git config core.hooksPath .githooks
+
+set -e
+
+echo "[pre-push] Running e2e tests..."
+python3 tests/test_e2e.py
+echo "[pre-push] Tests passed."
