@@ -1,0 +1,152 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute and apply release
+        run: |
+          python3 - <<'EOF'
+          import json, subprocess, re, sys, os
+          from datetime import date
+
+          # ── Collect commits since last tag ────────────────────────────
+          result = subprocess.run(
+              ["git", "describe", "--tags", "--abbrev=0"],
+              capture_output=True, text=True
+          )
+          last_tag = result.stdout.strip() if result.returncode == 0 else ""
+          ref = f"{last_tag}..HEAD" if last_tag else "HEAD"
+
+          commits = subprocess.run(
+              ["git", "log", "--pretty=format:%s", ref],
+              capture_output=True, text=True
+          ).stdout.strip().splitlines()
+
+          # Ignore automated release commits
+          commits = [c for c in commits if not re.match(r"^chore: release v", c)]
+
+          if not commits:
+              print("No releasable commits — skipping.", file=sys.stderr)
+              sys.exit(0)
+
+          # ── Determine bump type ────────────────────────────────────────
+          # breaking → major | feat → minor | fix/perf → patch
+          bump = "none"
+          for msg in commits:
+              if re.search(r"BREAKING.CHANGE|!:", msg):
+                  bump = "major"; break
+              elif re.match(r"^feat(\(.+\))?:", msg) and bump != "major":
+                  bump = "minor"
+              elif re.match(r"^(fix|perf)(\(.+\))?:", msg) and bump == "none":
+                  bump = "patch"
+
+          if bump == "none":
+              print("No feat/fix/perf commits — skipping.", file=sys.stderr)
+              sys.exit(0)
+
+          # ── Compute new version ────────────────────────────────────────
+          with open(".claude-plugin/plugin.json") as f:
+              current = json.load(f)["version"]
+
+          major, minor, patch = map(int, current.split("."))
+          if   bump == "major": major += 1; minor = 0; patch = 0
+          elif bump == "minor": minor += 1; patch = 0
+          else:                 patch += 1
+          version = f"{major}.{minor}.{patch}"
+
+          print(f"Bumping {current} → {version} ({bump})", file=sys.stderr)
+
+          # ── Update plugin.json ────────────────────────────────────────
+          with open(".claude-plugin/plugin.json") as f:
+              data = json.load(f)
+          data["version"] = version
+          with open(".claude-plugin/plugin.json", "w") as f:
+              json.dump(data, f, indent=2)
+              f.write("\n")
+
+          # ── Update marketplace.json ───────────────────────────────────
+          with open(".claude-plugin/marketplace.json") as f:
+              data = json.load(f)
+          for p in data.get("plugins", []):
+              if "version" in p:
+                  p["version"] = version
+          with open(".claude-plugin/marketplace.json", "w") as f:
+              json.dump(data, f, indent=2)
+              f.write("\n")
+
+          # ── Categorise commits ────────────────────────────────────────
+          sections = {"Added": [], "Fixed": [], "Performance": [], "Changed": []}
+          for msg in commits:
+              if re.match(r"^feat(\(.+\))?:", msg):
+                  sections["Added"].append(re.sub(r"^feat(\(.+\))?:\s*", "", msg))
+              elif re.match(r"^fix(\(.+\))?:", msg):
+                  sections["Fixed"].append(re.sub(r"^fix(\(.+\))?:\s*", "", msg))
+              elif re.match(r"^perf(\(.+\))?:", msg):
+                  sections["Performance"].append(re.sub(r"^perf(\(.+\))?:\s*", "", msg))
+              else:
+                  sections["Changed"].append(msg)
+
+          # ── Update CHANGELOG.md ───────────────────────────────────────
+          today = date.today().isoformat()
+          entry = f"## [{version}] - {today}\n"
+          for section, items in sections.items():
+              if items:
+                  entry += f"\n### {section}\n\n"
+                  entry += "\n".join(f"- {i}" for i in items) + "\n"
+          entry += "\n---\n"
+
+          with open("CHANGELOG.md") as f:
+              changelog = f.read()
+          # Insert after the header block (after the first ---)
+          insert_at = changelog.index("\n---\n") + 5
+          with open("CHANGELOG.md", "w") as f:
+              f.write(changelog[:insert_at] + "\n" + entry + "\n" + changelog[insert_at:])
+
+          # ── Write release notes for gh release create ─────────────────
+          notes = "## What's Changed\n\n"
+          for section, items in sections.items():
+              if items:
+                  notes += f"### {section}\n\n"
+                  notes += "\n".join(f"- {i}" for i in items) + "\n\n"
+          repo = "Gorluxor/Claude-Code-Diff-Review"
+          if last_tag:
+              notes += f"**Full Changelog**: https://github.com/{repo}/compare/{last_tag}...v{version}\n"
+          with open("/tmp/release_notes.md", "w") as f:
+              f.write(notes)
+
+          # ── Export version for subsequent steps ───────────────────────
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write(f"RELEASE_VERSION={version}\n")
+          EOF
+
+      - name: Commit, tag, and push
+        if: env.RELEASE_VERSION != ''
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .claude-plugin/plugin.json .claude-plugin/marketplace.json CHANGELOG.md
+          git commit -m "chore: release v${RELEASE_VERSION} [skip ci]"
+          git tag "v${RELEASE_VERSION}"
+          git push origin main --tags
+
+      - name: Create GitHub Release
+        if: env.RELEASE_VERSION != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${RELEASE_VERSION}" \
+            --title "v${RELEASE_VERSION}"          \
+            --notes-file /tmp/release_notes.md
