@@ -232,7 +232,9 @@ def _run_ide_review(
     )
     sys.stderr.write(f"{BOLD}{MAGENTA}{'─' * 60}{RESET}\n\n")
     sys.stderr.write(
-        f"  {DIM}Use 'Revert Selected Ranges' in VS Code to reject individual hunks.{RESET}\n\n"
+        f"  {DIM}Left = original · Right = Claude's version{RESET}\n"
+        f"  {DIM}→ {RESET}{BOLD}Ctrl+S{RESET}{DIM} to accept  "
+        f"→ {RESET}{BOLD}Revert{RESET}{DIM} arrows to reject individual hunks{RESET}\n\n"
     )
 
     decisions: dict = {}
