@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.1.6] - 2026-04-09
+
+### Added
+
+- **Native slash commands** — `/claude-diff-review:accept`, `/claude-diff-review:restore`, `/claude-diff-review:status`, `/claude-diff-review:diff`, `/claude-diff-review:reconfigure` are now available directly in Claude Code with pre-approved tool access (no permission dialog, minimal tokens).
+
+---
+
 ## [0.1.5] - 2026-04-09
 
 ### Added
