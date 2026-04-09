@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.1.10] - 2026-04-09
+
+### Fixed
+
+- always create config on first run; reconfigure restores config on tty failure
+
+---
+
+
 ## [0.1.9] - 2026-04-09
 
 ### Fixed
