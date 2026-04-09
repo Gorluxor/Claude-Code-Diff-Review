@@ -8,6 +8,6 @@
   "homepage": "https://github.com/Gorluxor/Claude-Code-Diff-Review",
   "repository": "https://github.com/Gorluxor/Claude-Code-Diff-Review",
   "license": "Apache-2.0",
-  "commands": ["./commands/"],
+  "commands": ["./.claude-plugin/commands/"],
   "skills": ["./skills/"]
 }

@@ -107,35 +107,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
     mkdir -p "$CONFIG_DIR"
     cat > "$CONFIG_FILE" << 'EOF'
 {
-<<<<<<< original
-=======
-<<<<<<< original
-=======
-<<<<<<< original
-=======
-<<<<<<< original
-=======
-<<<<<<< original
->>>>>>> claude
->>>>>>> claude
->>>>>>> claude
->>>>>>> claude
   "review_mode": "vscode",
-<<<<<<< original
-=======
-<<<<<<< original
-=======
-<<<<<<< original
-=======
-<<<<<<< original
-=======
-=======
-  "review_mode": "interactive",
->>>>>>> claude
->>>>>>> claude
->>>>>>> claude
->>>>>>> claude
->>>>>>> claude
   "auto_cleanup": true,
   "review_scope": "session"
 }
