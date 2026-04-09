@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.3.2] - 2026-04-09
+
+### Fixed
+
+- remove Stop hook timeout so openDiff can wait for user review
+
+---
+
+
 ## [0.3.1] - 2026-04-09
 
 ### Fixed
