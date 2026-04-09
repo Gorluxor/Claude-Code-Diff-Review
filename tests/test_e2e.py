@@ -546,19 +546,20 @@ def main():
 
     # 13b–d: open_diff_in_ide with each response type
     tmpdir_ide = tempfile.mkdtemp(prefix="cdr-ide-test-")
-    test_file_ide = Path(tmpdir_ide) / "hello.py"
-    test_file_ide.write_text("print('original')\n")
+    shadow_file_ide = Path(tmpdir_ide) / "hello.py.shadow"
+    test_file_ide   = Path(tmpdir_ide) / "hello.py"
+    shadow_file_ide.write_text("print('original')\n")
+    test_file_ide.write_text("print('claude version')\n")
 
     for response_type in ("FILE_SAVED", "DIFF_REJECTED", "TAB_CLOSED"):
         step(f"Mock IDE responds with {response_type}...")
         httpd, port = _make_mock_ide_server(response_type)
         try:
             server = {"port": port, "transport": "sse", "auth_token": None, "ide_name": "MockIDE"}
-            # Restore to original before call (as stop.py does)
-            test_file_ide.write_text("print('original')\n")
             result_val = open_diff_in_ide(
-                server, str(test_file_ide),
-                "print('claude version')\n",
+                server,
+                str(shadow_file_ide),   # old (original)
+                str(test_file_ide),     # new (Claude's version)
                 f"Test: {response_type}",
                 timeout=10,
             )
@@ -574,7 +575,7 @@ def main():
     # 13e: WebSocket transport attempts connection and returns None on failure
     step("WebSocket transport returns None when server unreachable...")
     ws_server = {"port": 9999, "transport": "ws", "auth_token": None, "ide_name": "WSTest"}
-    result_ws = open_diff_in_ide(ws_server, "/tmp/x.py", "content", "tab", timeout=1)
+    result_ws = open_diff_in_ide(ws_server, "/tmp/x.py", "/tmp/x.py", "tab", timeout=1)
     if result_ws is None:
         ok("WebSocket transport returned None (connection refused — correct fallback)")
     else:

@@ -260,15 +260,16 @@ def _run_ide_review(
         sys.stderr.write(f"  {CYAN}▶{RESET}  {BOLD}{rel}{RESET}  {DIM}(opening diff…){RESET}\n")
         sys.stderr.flush()
 
-        # Restore real file to original: openDiff shows left=original, right=proposed
-        real.write_text(original_content)
-
+        # Pass shadow as left (original) and real as right (Claude's version).
+        # Do NOT touch the file on disk — VS Code reads both paths directly.
         response = open_diff_in_ide(
-            ide_server, str(real), claude_content,
+            ide_server, str(shadow), str(real),
             f"Review: {rel}", timeout=600,
         )
 
         if response == "DIFF_REJECTED":
+            # User explicitly rejected — restore original
+            real.write_text(original_content)
             decisions[abs_path] = {
                 "type": "rejected",
                 "original": original_content,
@@ -311,9 +312,8 @@ def _run_ide_review(
                 )
 
         else:
-            # TAB_CLOSED or None (timeout/error) → keep Claude's version
-            real.write_text(claude_content)
-            label = "no response — accepted Claude's version" if response is None else "accepted"
+            # TAB_CLOSED or None (timeout/error) → keep Claude's version as-is
+            label = "no response — kept Claude's version" if response is None else "accepted"
             color = YELLOW if response is None else GREEN
             marker = "?" if response is None else "✓"
             sys.stderr.write(

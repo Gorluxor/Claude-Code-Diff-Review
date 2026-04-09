@@ -69,8 +69,8 @@ def find_ide_server() -> Optional[dict]:
 
 def _ws_open_diff_in_ide(
     server: dict,
-    file_path: str,
-    new_content: str,
+    old_file_path: str,
+    new_file_path: str,
     tab_name: str,
     timeout: int = 600,
 ) -> Optional[str]:
@@ -210,9 +210,8 @@ def _ws_open_diff_in_ide(
             "params": {
                 "name": "openDiff",
                 "arguments": {
-                    "old_file_path": file_path,
-                    "new_file_path": file_path,
-                    "new_file_contents": new_content,
+                    "old_file_path": old_file_path,
+                    "new_file_path": new_file_path,
                     "tab_name": tab_name,
                 },
             },
@@ -243,31 +242,28 @@ def _ws_open_diff_in_ide(
 
 def open_diff_in_ide(
     server: dict,
-    file_path: str,
-    new_content: str,
+    old_file_path: str,
+    new_file_path: str,
     tab_name: str,
     timeout: int = 600,
 ) -> Optional[str]:
     """
     Open a native VS Code diff review tab via Claude Code's MCP openDiff RPC.
 
-    Before calling this:
-      - file_path on disk must contain the ORIGINAL content (pre-edit baseline)
-      - new_content is Claude's proposed version (shown on the right side)
+    old_file_path: shadow file (original content) — shown on the LEFT (read-only)
+    new_file_path: real file (Claude's version)   — shown on the RIGHT (editable)
 
-    VS Code shows: left = current file (original), right = new_content (proposed).
-    The user can accept all, reject all, or revert individual hunks before saving.
+    VS Code shows: left = original, right = Claude's version.
+    The user saves to accept, uses Revert arrows to reject individual hunks.
 
-    If the user saves (FILE_SAVED), VS Code writes their final version to file_path.
-    If the user rejects (DIFF_REJECTED), file_path stays as original.
-    If the user closes the tab (TAB_CLOSED), Claude's version is treated as accepted.
-
-    Only supports SSE transport. Returns None for WebSocket servers or on error.
+    If the user saves (FILE_SAVED), VS Code writes their final version to new_file_path.
+    If the user rejects (DIFF_REJECTED), the caller should restore original to new_file_path.
+    If the user closes the tab (TAB_CLOSED), Claude's version is kept as-is.
 
     Returns: "FILE_SAVED" | "DIFF_REJECTED" | "TAB_CLOSED" | None
     """
     if server.get("transport") == "ws":
-        return _ws_open_diff_in_ide(server, file_path, new_content, tab_name, timeout)
+        return _ws_open_diff_in_ide(server, old_file_path, new_file_path, tab_name, timeout)
 
     port = server["port"]
     auth = server.get("auth_token")
@@ -336,9 +332,8 @@ def open_diff_in_ide(
         "params": {
             "name": "openDiff",
             "arguments": {
-                "old_file_path": file_path,
-                "new_file_path": file_path,
-                "new_file_contents": new_content,
+                "old_file_path": old_file_path,
+                "new_file_path": new_file_path,
                 "tab_name": tab_name,
             },
         },
