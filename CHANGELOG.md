@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.4.1] - 2026-04-09
+
+### Fixed
+
+- amend version bump into triggering commit instead of chore commit
+
+---
+
+
 ## [0.4.0] - 2026-04-09
 
 ### Added
