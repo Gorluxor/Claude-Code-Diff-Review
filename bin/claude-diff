@@ -1,0 +1,523 @@
+#!/usr/bin/env python3
+"""
+claude-diff — CLI companion for claude-diff-review.
+
+Commands:
+  status            Show current session state and tracked files
+  accept            Accept all changes and clean up shadow copies
+  restore [path]    Restore one or all files to their pre-edit state
+  diff [path]       Open VS Code diff for one or all tracked files
+  config            Show or edit configuration
+  cleanup           Remove all sessions and shadow data
+  install           Install hooks into Claude Code settings
+  uninstall         Remove hooks from Claude Code settings
+"""
+
+import sys
+import os
+import json
+import argparse
+import subprocess
+import shutil
+import difflib
+from pathlib import Path
+
+# Resolve the installation directory
+INSTALL_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(INSTALL_DIR))
+
+from lib.state import (
+    load_state,
+    save_state,
+    get_edited_files,
+    get_shadow_path,
+    get_working_dir,
+    get_session_dir,
+    restore_file,
+    restore_all,
+    cleanup_session,
+    cleanup_old_sessions,
+)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# ANSI
+# ──────────────────────────────────────────────────────────────────────
+
+RESET = "\033[0m"
+BOLD = "\033[1m"
+DIM = "\033[2m"
+RED = "\033[31m"
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+BLUE = "\033[34m"
+MAGENTA = "\033[35m"
+CYAN = "\033[36m"
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Helpers
+# ──────────────────────────────────────────────────────────────────────
+
+def format_path(abs_path: str) -> str:
+    wd = get_working_dir()
+    try:
+        return str(Path(abs_path).relative_to(wd))
+    except ValueError:
+        return abs_path
+
+
+def get_config_path() -> Path:
+    return Path.home() / ".claude-diff-review" / "config.json"
+
+
+def load_config() -> dict:
+    cp = get_config_path()
+    if cp.exists():
+        try:
+            return json.loads(cp.read_text())
+        except Exception:
+            pass
+    return {
+        "review_mode": "vscode",    # vscode, terminal, summary
+        "auto_cleanup": True,       # clean shadow after accept
+        "review_scope": "session",  # session (all at Stop) or file (progressive)
+    }
+
+
+def save_config(config: dict):
+    cp = get_config_path()
+    cp.parent.mkdir(parents=True, exist_ok=True)
+    cp.write_text(json.dumps(config, indent=2))
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Commands
+# ──────────────────────────────────────────────────────────────────────
+
+def cmd_status(args):
+    """Show current session state."""
+    state = load_state()
+    edited = get_edited_files()
+
+    if not edited:
+        print(f"{DIM}No files tracked in current session.{RESET}")
+        return
+
+    print(f"\n{BOLD}{MAGENTA}◆ claude-diff-review — session status{RESET}\n")
+
+    total_add = 0
+    total_del = 0
+
+    for abs_path, count in sorted(edited.items()):
+        rel = format_path(abs_path)
+        shadow = get_shadow_path(abs_path)
+        real = Path(abs_path)
+
+        # Compute diff stats
+        try:
+            old = shadow.read_text(errors="replace").splitlines() if shadow.exists() else []
+            new = real.read_text(errors="replace").splitlines() if real.exists() else []
+            diff = list(difflib.unified_diff(old, new))
+            adds = sum(1 for l in diff if l.startswith("+") and not l.startswith("+++"))
+            dels = sum(1 for l in diff if l.startswith("-") and not l.startswith("---"))
+        except Exception:
+            adds, dels = 0, 0
+
+        total_add += adds
+        total_del += dels
+
+        add_str = f"{GREEN}+{adds}{RESET}" if adds else f"{DIM}+0{RESET}"
+        del_str = f"{RED}-{dels}{RESET}" if dels else f"{DIM}-0{RESET}"
+        edits_str = f"{DIM}({count} edit{'s' if count != 1 else ''}){RESET}"
+        print(f"  {BOLD}{rel}{RESET}  {add_str} {del_str}  {edits_str}")
+
+    print(f"\n  {DIM}Total: {GREEN}+{total_add}{RESET} {RED}-{total_del}{RESET} "
+          f"across {len(edited)} file{'s' if len(edited) != 1 else ''}{RESET}\n")
+
+
+def cmd_accept(args):
+    """Accept all changes and clean up shadow copies."""
+    edited = get_edited_files()
+
+    if not edited:
+        print(f"{DIM}Nothing to accept — no tracked edits.{RESET}")
+        return
+
+    count = len(edited)
+    print(f"{GREEN}✓{RESET} Accepted {count} file{'s' if count != 1 else ''}.")
+
+    config = load_config()
+    if config.get("auto_cleanup", True):
+        cleanup_session()
+        print(f"{DIM}  Shadow copies cleaned up.{RESET}")
+    else:
+        # Just clear the edit tracking, keep shadows as backup
+        state = load_state()
+        state["edited_files"] = {}
+        save_state(state)
+        print(f"{DIM}  Shadow copies retained (auto_cleanup=false).{RESET}")
+
+
+def cmd_restore(args):
+    """Restore one or all files."""
+    target = args.path
+
+    if target:
+        # Restore a specific file
+        abs_path = str(Path(target).resolve())
+        edited = get_edited_files()
+
+        # Try to match by relative or absolute path
+        match = None
+        for p in edited:
+            if p == abs_path or format_path(p) == target:
+                match = p
+                break
+
+        if not match:
+            print(f"{RED}✗{RESET} File not tracked: {target}")
+            print(f"{DIM}  Tracked files:{RESET}")
+            for p in edited:
+                print(f"    {format_path(p)}")
+            return
+
+        if restore_file(match):
+            print(f"{YELLOW}↺{RESET} Restored: {format_path(match)}")
+            # Remove from edit tracking
+            state = load_state()
+            state["edited_files"].pop(match, None)
+            save_state(state)
+        else:
+            print(f"{RED}✗{RESET} No shadow copy found for: {format_path(match)}")
+    else:
+        # Restore all
+        edited = get_edited_files()
+        if not edited:
+            print(f"{DIM}Nothing to restore — no tracked edits.{RESET}")
+            return
+
+        restored = restore_all()
+        for p in restored:
+            print(f"  {YELLOW}↺{RESET} {format_path(p)}")
+        print(f"\n{YELLOW}↺{RESET} Restored {len(restored)} file{'s' if len(restored) != 1 else ''}.")
+        cleanup_session()
+
+
+def cmd_diff(args):
+    """Open diffs in VS Code or terminal."""
+    edited = get_edited_files()
+    if not edited:
+        print(f"{DIM}No tracked edits to diff.{RESET}")
+        return
+
+    config = load_config()
+    mode = args.mode or config.get("review_mode", "vscode")
+
+    targets = edited
+    if args.path:
+        abs_path = str(Path(args.path).resolve())
+        match = None
+        for p in edited:
+            if p == abs_path or format_path(p) == args.path:
+                match = p
+                break
+        if not match:
+            print(f"{RED}✗{RESET} File not tracked: {args.path}")
+            return
+        targets = {match: edited[match]}
+
+    for abs_path in sorted(targets):
+        rel = format_path(abs_path)
+        shadow = get_shadow_path(abs_path)
+        real = Path(abs_path)
+
+        if mode == "vscode":
+            try:
+                subprocess.Popen(
+                    ["code", "--diff", str(shadow), str(real)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                print(f"  {CYAN}▶{RESET} Opened diff: {rel}")
+            except FileNotFoundError:
+                print(f"  {YELLOW}⚠{RESET} VS Code CLI not found, printing to terminal:")
+                _print_file_diff(shadow, real, rel)
+        else:
+            _print_file_diff(shadow, real, rel)
+
+
+def _print_file_diff(shadow: Path, real: Path, rel: str):
+    try:
+        old = shadow.read_text(errors="replace").splitlines() if shadow.exists() else []
+        new = real.read_text(errors="replace").splitlines() if real.exists() else []
+    except Exception:
+        old, new = [], []
+
+    diff = list(difflib.unified_diff(
+        old, new,
+        fromfile=f"a/{rel}",
+        tofile=f"b/{rel}",
+        lineterm=""
+    ))
+    if not diff:
+        print(f"  {DIM}(no changes) {rel}{RESET}")
+        return
+
+    for line in diff:
+        if line.startswith("+++") or line.startswith("---"):
+            print(f"  {BOLD}{line}{RESET}")
+        elif line.startswith("@@"):
+            print(f"  {CYAN}{line}{RESET}")
+        elif line.startswith("+"):
+            print(f"  {GREEN}{line}{RESET}")
+        elif line.startswith("-"):
+            print(f"  {RED}{line}{RESET}")
+        else:
+            print(f"  {line}")
+    print()
+
+
+def cmd_config(args):
+    """Show or modify configuration."""
+    config = load_config()
+
+    if args.key and args.value:
+        config[args.key] = args.value
+        save_config(config)
+        print(f"{GREEN}✓{RESET} Set {args.key} = {args.value}")
+    elif args.key:
+        val = config.get(args.key, f"{RED}(not set){RESET}")
+        print(f"  {args.key} = {val}")
+    else:
+        print(f"\n{BOLD}Configuration{RESET} ({get_config_path()})\n")
+        for k, v in config.items():
+            print(f"  {k} = {BOLD}{v}{RESET}")
+        print()
+        print(f"{DIM}  review_mode:  vscode | terminal | summary{RESET}")
+        print(f"{DIM}  review_scope: session (all diffs at Stop) | "
+              f"file (progressive, per-file as Claude works){RESET}")
+        print(f"{DIM}  auto_cleanup: true | false{RESET}\n")
+
+
+def cmd_cleanup(args):
+    """Remove all session data."""
+    base = Path.home() / ".claude-diff-review" / "sessions"
+    if base.exists():
+        count = sum(1 for _ in base.iterdir() if _.is_dir())
+        shutil.rmtree(base, ignore_errors=True)
+        print(f"{GREEN}✓{RESET} Removed {count} session(s).")
+    else:
+        print(f"{DIM}No sessions to clean.{RESET}")
+
+
+def cmd_install(args):
+    """Install hooks into Claude Code settings."""
+    settings_path = args.settings or Path.home() / ".claude" / "settings.json"
+    settings_path = Path(settings_path)
+
+    # Load existing settings
+    settings = {}
+    if settings_path.exists():
+        try:
+            settings = json.loads(settings_path.read_text())
+        except json.JSONDecodeError:
+            print(f"{YELLOW}⚠{RESET} Existing settings.json is malformed. Creating backup...")
+            backup = settings_path.with_suffix(".json.backup")
+            shutil.copy2(str(settings_path), str(backup))
+            print(f"  Backup: {backup}")
+
+    hooks = settings.setdefault("hooks", {})
+
+    # Define our hook entries
+    hook_dir = INSTALL_DIR / "hooks"
+    our_hooks = {
+        "SessionStart": [{
+            "hooks": [{
+                "type": "command",
+                "command": f"python3 {hook_dir / 'session_start.py'}",
+                "timeout": 5,
+            }]
+        }],
+        "PreToolUse": [{
+            "matcher": "Edit|Write|MultiEdit",
+            "hooks": [{
+                "type": "command",
+                "command": f"python3 {hook_dir / 'pre_tool_use.py'}",
+                "timeout": 5,
+            }]
+        }],
+        "PostToolUse": [{
+            "matcher": "Edit|Write|MultiEdit",
+            "hooks": [{
+                "type": "command",
+                "command": f"python3 {hook_dir / 'post_tool_use.py'}",
+                "timeout": 5,
+            }]
+        }],
+        "Stop": [{
+            "hooks": [{
+                "type": "command",
+                "command": f"python3 {hook_dir / 'stop.py'}",
+                "timeout": 15,
+            }]
+        }],
+    }
+
+    # Merge: append our hooks, don't overwrite existing ones
+    for event, matchers in our_hooks.items():
+        existing = hooks.get(event, [])
+        # Remove any previous claude-diff-review entries
+        existing = [
+            m for m in existing
+            if not any("claude-diff-review" in str(h.get("command", ""))
+                      or "diff_review" in str(h.get("command", ""))
+                      for h in m.get("hooks", []))
+        ]
+        existing.extend(matchers)
+        hooks[event] = existing
+
+    settings["hooks"] = hooks
+
+    # Also add Edit/Write to permissions.allow for auto-approve
+    permissions = settings.setdefault("permissions", {})
+    allow = permissions.setdefault("allow", [])
+    for tool in ["Edit", "Write", "MultiEdit"]:
+        if tool not in allow:
+            allow.append(tool)
+    permissions["allow"] = allow
+
+    # Write back
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(json.dumps(settings, indent=2))
+
+    print(f"""
+{GREEN}✓{RESET} {BOLD}claude-diff-review installed!{RESET}
+
+  Settings:  {settings_path}
+  Hooks dir: {hook_dir}
+
+{BOLD}What happens now:{RESET}
+  1. File edits are auto-approved (no permission prompts)
+  2. Originals are captured to a shadow directory
+  3. When Claude finishes, diffs open in VS Code
+  4. Use {BOLD}claude-diff accept{RESET} or {BOLD}claude-diff restore{RESET} to finalize
+
+{DIM}Restart Claude Code for hooks to take effect.{RESET}
+""")
+
+
+def cmd_uninstall(args):
+    """Remove hooks from Claude Code settings."""
+    settings_path = args.settings or Path.home() / ".claude" / "settings.json"
+    settings_path = Path(settings_path)
+
+    if not settings_path.exists():
+        print(f"{DIM}No settings file found at {settings_path}{RESET}")
+        return
+
+    settings = json.loads(settings_path.read_text())
+    hooks = settings.get("hooks", {})
+
+    removed_count = 0
+    for event in list(hooks.keys()):
+        original = hooks[event]
+        filtered = [
+            m for m in original
+            if not any("claude-diff-review" in str(h.get("command", ""))
+                      or "diff_review" in str(h.get("command", ""))
+                      for h in m.get("hooks", []))
+        ]
+        if len(filtered) < len(original):
+            removed_count += len(original) - len(filtered)
+        if filtered:
+            hooks[event] = filtered
+        else:
+            del hooks[event]
+
+    # Remove auto-approved tools we added
+    permissions = settings.get("permissions", {})
+    allow = permissions.get("allow", [])
+    for tool in ["Edit", "Write", "MultiEdit"]:
+        if tool in allow:
+            allow.remove(tool)
+
+    settings_path.write_text(json.dumps(settings, indent=2))
+    print(f"{GREEN}✓{RESET} Removed {removed_count} hook(s). Restart Claude Code.")
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Argument parser
+# ──────────────────────────────────────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="claude-diff",
+        description="Review Claude Code edits with consolidated VS Code diffs.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=f"""
+{BOLD}Examples:{RESET}
+  claude-diff install          Set up hooks in Claude Code
+  claude-diff status           See what files were changed
+  claude-diff diff             Open all diffs in VS Code
+  claude-diff diff src/app.py  Open diff for one file
+  claude-diff restore          Reject all changes
+  claude-diff restore src/x.py Reject changes to one file
+  claude-diff accept           Accept all changes, clean up
+        """
+    )
+
+    subs = parser.add_subparsers(dest="command")
+
+    # status
+    subs.add_parser("status", help="Show tracked edits in current session")
+
+    # accept
+    subs.add_parser("accept", help="Accept all changes, clean up shadows")
+
+    # restore
+    p_restore = subs.add_parser("restore", help="Restore files to pre-edit state")
+    p_restore.add_argument("path", nargs="?", help="Specific file to restore (omit for all)")
+
+    # diff
+    p_diff = subs.add_parser("diff", help="Open diffs in VS Code")
+    p_diff.add_argument("path", nargs="?", help="Specific file (omit for all)")
+    p_diff.add_argument("--mode", choices=["vscode", "terminal"], help="Override review mode")
+
+    # config
+    p_config = subs.add_parser("config", help="View/edit configuration")
+    p_config.add_argument("key", nargs="?", help="Config key")
+    p_config.add_argument("value", nargs="?", help="New value")
+
+    # cleanup
+    subs.add_parser("cleanup", help="Remove all sessions and shadow data")
+
+    # install
+    p_install = subs.add_parser("install", help="Install hooks into Claude Code")
+    p_install.add_argument("--settings", help="Path to settings.json")
+
+    # uninstall
+    p_uninstall = subs.add_parser("uninstall", help="Remove hooks from Claude Code")
+    p_uninstall.add_argument("--settings", help="Path to settings.json")
+
+    args = parser.parse_args()
+
+    commands = {
+        "status": cmd_status,
+        "accept": cmd_accept,
+        "restore": cmd_restore,
+        "diff": cmd_diff,
+        "config": cmd_config,
+        "cleanup": cmd_cleanup,
+        "install": cmd_install,
+        "uninstall": cmd_uninstall,
+    }
+
+    if args.command in commands:
+        commands[args.command](args)
+    else:
+        parser.print_help()
+
+
+if __name__ == "__main__":
+    main()

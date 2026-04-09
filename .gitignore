@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.pyo
+.shadow/
+sessions/
+config.json
+*.egg-info/
+dist/
+build/
+
+.omc
+.vscode
+examples
