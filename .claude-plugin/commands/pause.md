@@ -1,5 +1,5 @@
 ---
-description: Pause diff tracking — hooks fire but do nothing until resumed
+description: Pause diff tracking for the current session
 allowed-tools: Bash(claude-diff pause:*)
 model: haiku
 ---
