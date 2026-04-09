@@ -79,9 +79,10 @@ def load_config() -> dict:
         except Exception:
             pass
     return {
-        "review_mode": "vscode",    # vscode, terminal, summary
-        "auto_cleanup": True,       # clean shadow after accept
-        "review_scope": "session",  # session (all at Stop) or file (progressive)
+        "review_mode":          "interactive",
+        "interactive_provider": "claude-code",
+        "review_scope":         "session",
+        "auto_cleanup":         True,
     }
 
 
@@ -295,8 +296,10 @@ def cmd_config(args):
             print(f"  {k} = {BOLD}{v}{RESET}")
         print()
         print(f"{DIM}  review_mode:  vscode | terminal | summary | interactive{RESET}")
-        print(f"{DIM}    interactive — write conflict markers, open in VS Code, wait for{RESET}")
-        print(f"{DIM}                  Accept/Reject per hunk; re-engages Claude on rejection{RESET}")
+        print(f"{DIM}    interactive — VS Code diff, per-hunk accept/reject, re-engages Claude on rejection{RESET}")
+        print(f"{DIM}  interactive_provider: claude-code | copilot{RESET}")
+        print(f"{DIM}    claude-code  — Claude Code MCP openDiff (blocking, one file at a time){RESET}")
+        print(f"{DIM}    copilot      — stage in git + Copilot 'Review Changes' panel (non-blocking){RESET}")
         print(f"{DIM}  review_scope: session (all diffs at Stop) | "
               f"file (progressive, per-file as Claude works){RESET}")
         print(f"{DIM}  auto_cleanup: true | false{RESET}\n")

@@ -40,8 +40,9 @@ RESET = "\033[0m"
 
 CONFIG_PATH = Path.home() / ".claude-diff-review" / "config.json"
 
-_REVIEW_MODES  = ["interactive", "vscode", "terminal", "summary"]
-_REVIEW_SCOPES = ["session", "file"]
+_REVIEW_MODES     = ["interactive", "vscode", "terminal", "summary"]
+_REVIEW_SCOPES    = ["session", "file"]
+_REVIEW_PROVIDERS = ["claude-code", "copilot"]
 
 
 def _ask(tty, prompt: str, choices: list, default: str) -> str:
@@ -73,13 +74,21 @@ def _run_setup_wizard() -> None:
         tty.write(f"\n{BOLD}{CYAN}  ◆ claude-diff-review — first-run setup{RESET}\n")
         tty.write(f"{DIM}  ──────────────────────────────────────{RESET}\n")
         tty.write(
-            f"  {DIM}interactive{RESET}  Native VS Code side-by-side diff, per-hunk accept/reject\n"
-            f"  {DIM}vscode{RESET}       Open code --diff (view only, no in-editor accept/reject)\n"
+            f"  {DIM}interactive{RESET}  Native VS Code diff, per-hunk accept/reject (recommended)\n"
+            f"  {DIM}vscode{RESET}       Open code --diff (view only)\n"
             f"  {DIM}terminal{RESET}     Coloured unified diff printed to the terminal\n"
             f"  {DIM}summary{RESET}      File list with +/- counts only\n\n"
         )
 
-        mode  = _ask(tty, "Review mode", _REVIEW_MODES,  "interactive")
+        mode = _ask(tty, "Review mode", _REVIEW_MODES, "interactive")
+
+        provider = "claude-code"
+        if mode == "interactive":
+            tty.write(
+                f"\n  {DIM}claude-code{RESET}  VS Code native diff via Claude Code extension (blocking)\n"
+                f"  {DIM}copilot{RESET}      Stage in git + Copilot 'Review Changes' panel (non-blocking)\n\n"
+            )
+            provider = _ask(tty, "Interactive provider", _REVIEW_PROVIDERS, "claude-code")
 
         tty.write(
             f"\n  {DIM}session{RESET}  Show all diffs together when Claude finishes its turn\n"
@@ -89,9 +98,10 @@ def _run_setup_wizard() -> None:
         scope = _ask(tty, "Review scope", _REVIEW_SCOPES, "session")
 
         config = {
-            "review_mode":  mode,
-            "review_scope": scope,
-            "auto_cleanup": True,
+            "review_mode":          mode,
+            "interactive_provider": provider,
+            "review_scope":         scope,
+            "auto_cleanup":         True,
         }
         CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         CONFIG_PATH.write_text(json.dumps(config, indent=2))
@@ -105,9 +115,10 @@ def _run_setup_wizard() -> None:
 
 
 _DEFAULTS = {
-    "review_mode": "interactive",
-    "review_scope": "session",
-    "auto_cleanup": True,
+    "review_mode":          "interactive",
+    "interactive_provider": "claude-code",
+    "review_scope":         "session",
+    "auto_cleanup":         True,
 }
 
 

@@ -751,6 +751,99 @@ def main():
     cleanup_session()
     shutil.rmtree(tmpdir_rec, ignore_errors=True)
 
+    # ── 16. Copilot provider — git staging ───────────────────────
+    header("Copilot provider — git staging")
+
+    import tempfile as _tempfile
+    tmpdir_cop = Path(_tempfile.mkdtemp(prefix="cdr-copilot-"))
+
+    # Init a bare git repo so git add works
+    subprocess.run(["git", "init", str(tmpdir_cop)], capture_output=True)
+    subprocess.run(["git", "-C", str(tmpdir_cop), "commit", "--allow-empty",
+                    "-m", "init"], capture_output=True)
+
+    cop_file = tmpdir_cop / "main.py"
+    cop_file.write_text("print('original')\n")
+    subprocess.run(["git", "-C", str(tmpdir_cop), "add", str(cop_file)],
+                   capture_output=True)
+    subprocess.run(["git", "-C", str(tmpdir_cop), "commit", "-m", "add main.py"],
+                   capture_output=True)
+
+    # Simulate Claude editing the file
+    cop_file.write_text("print('claude version')\n")
+
+    # Set up session state pointing to the tmp project
+    os.environ["CLAUDE_SESSION_ID"] = "copilot-test"
+    os.environ["CLAUDE_WORKING_DIR"] = str(tmpdir_cop)
+
+    from lib import state as _state_mod
+    _state_mod.capture_original(str(cop_file))
+    _state_mod.record_edit(str(cop_file))
+
+    # Import the Copilot review function
+    import importlib
+    stop_cop = importlib.import_module("hooks.stop")
+
+    edited = _state_mod.get_edited_files()
+
+    step("Copilot provider: git stages edited files...")
+    orig_stderr = sys.stderr
+    sys.stderr = io.StringIO()
+    try:
+        # _run_copilot_review calls sys.exit(0) — catch it
+        try:
+            stop_cop._run_copilot_review(edited, {})
+        except SystemExit as e:
+            exit_code = e.code
+    finally:
+        cop_output = sys.stderr.getvalue()
+        sys.stderr = orig_stderr
+
+    if exit_code == 0:
+        ok("Copilot provider exited cleanly (0)")
+    else:
+        fail(f"Expected exit 0, got {exit_code}")
+
+    # Verify the file was staged
+    result = subprocess.run(
+        ["git", "-C", str(tmpdir_cop), "diff", "--cached", "--name-only"],
+        capture_output=True, text=True,
+    )
+    if "main.py" in result.stdout:
+        ok("Copilot provider staged the edited file in git")
+    else:
+        fail(f"File not staged. git diff --cached: {result.stdout!r}")
+
+    step("Copilot provider: non-git dir falls back gracefully...")
+    tmpdir_nogit = Path(_tempfile.mkdtemp(prefix="cdr-nogit-"))
+    nogit_file = tmpdir_nogit / "script.py"
+    nogit_file.write_text("x = 1\n")
+    os.environ["CLAUDE_WORKING_DIR"] = str(tmpdir_nogit)
+    _state_mod.capture_original(str(nogit_file))
+    _state_mod.record_edit(str(nogit_file))
+    edited_nogit = _state_mod.get_edited_files()
+
+    sys.stderr = io.StringIO()
+    try:
+        try:
+            stop_cop._run_copilot_review(edited_nogit, {})
+        except SystemExit as e:
+            exit_code2 = e.code
+    finally:
+        sys.stderr = orig_stderr
+
+    if exit_code2 == 0:
+        ok("Copilot provider (non-git) exited cleanly (0)")
+    else:
+        fail(f"Expected exit 0 in non-git mode, got {exit_code2}")
+
+    # Restore env
+    os.environ.pop("CLAUDE_WORKING_DIR", None)
+    os.environ.pop("CLAUDE_SESSION_ID", None)
+    shutil.rmtree(tmpdir_cop, ignore_errors=True)
+    shutil.rmtree(tmpdir_nogit, ignore_errors=True)
+    cleanup_session()
+
     header("All tests passed!")
     print(f"  {G}✓{R} SessionStart initializes state")
     print(f"  {G}✓{R} PreToolUse captures original, returns 'allow'")
@@ -771,6 +864,8 @@ def main():
     print(f"  {G}✓{R} Terminal review: y/n/a/d per-hunk decisions")
     print(f"  {G}✓{R} Terminal review: no-tty mode accepts all hunks silently")
     print(f"  {G}✓{R} Reconstruction: mixed accept/reject produces correct file")
+    print(f"  {G}✓{R} Copilot provider: stages edited files in git")
+    print(f"  {G}✓{R} Copilot provider: exits cleanly when not a git repo")
     print()
 
 

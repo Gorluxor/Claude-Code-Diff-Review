@@ -558,13 +558,70 @@ def _run_terminal_review(edited_files: dict, state: dict, re_engage: bool) -> No
     sys.exit(0)
 
 
+def _run_copilot_review(edited_files: dict, state: dict) -> None:
+    """
+    Copilot provider: stage all Claude-edited files in git so that VS Code's
+    Source Control panel (and Copilot's Review Changes) picks them up.
+
+    The user drives the accept/reject from VS Code — this hook does not block.
+    """
+    sys.stderr.write(f"\n{BOLD}{MAGENTA}{'─' * 60}{RESET}\n")
+    sys.stderr.write(f"{BOLD}{MAGENTA}  ◆ claude-diff-review — interactive (Copilot){RESET}\n")
+    sys.stderr.write(f"{BOLD}{MAGENTA}{'─' * 60}{RESET}\n\n")
+
+    staged = []
+    for abs_path in sorted(edited_files):
+        if not Path(abs_path).exists():
+            continue
+        try:
+            subprocess.run(
+                ["git", "add", abs_path],
+                capture_output=True,
+                cwd=str(get_working_dir()),
+                check=True,
+            )
+            staged.append(format_path(abs_path))
+        except Exception:
+            pass
+
+    if staged:
+        sys.stderr.write(f"  {GREEN}✓{RESET}  Staged {len(staged)} file(s) in git:\n")
+        for rel in staged:
+            sys.stderr.write(f"      {DIM}{rel}{RESET}\n")
+        sys.stderr.write(
+            f"\n  {CYAN}Next steps in VS Code:{RESET}\n"
+            f"  {DIM}1. Open Source Control panel  (Ctrl+Shift+G){RESET}\n"
+            f"  {DIM}2. Click ✦ Copilot → Review and Comment{RESET}\n"
+            f"  {DIM}3. Accept / discard per suggestion{RESET}\n\n"
+            f"  {DIM}Or open the Copilot Chat panel and ask it to review staged changes.{RESET}\n"
+        )
+    else:
+        sys.stderr.write(f"  {YELLOW}⚠  No files could be staged (not a git repo?){RESET}\n")
+        sys.stderr.write(f"  {DIM}Falling back to VS Code diffs.{RESET}\n\n")
+        for abs_path in sorted(edited_files):
+            shadow = get_shadow_path(abs_path)
+            real = Path(abs_path)
+            if real.exists():
+                open_vscode_diff(shadow, real, format_path(abs_path))
+
+    sys.stderr.write(f"{DIM}{'─' * 60}{RESET}\n\n")
+    sys.exit(0)
+
+
 def run_interactive_review(
-    edited_files: dict, state: dict, re_engage: bool = True
+    edited_files: dict, state: dict, provider: str = "claude-code",
+    re_engage: bool = True,
 ) -> None:
     """
     Entry point for interactive review.
-    Uses native VS Code IDE RPC if available, falls back to terminal.
+
+    provider="claude-code" — native VS Code openDiff MCP, one file at a time (blocking)
+    provider="copilot"     — stage in git + Copilot Source Control review (non-blocking)
     """
+    if provider == "copilot":
+        _run_copilot_review(edited_files, state)
+        # exits internally
+
     from lib.ide import find_ide_server
     ide_server = find_ide_server()
     if ide_server:
@@ -593,18 +650,20 @@ def main():
     config_path = Path.home() / ".claude-diff-review" / "config.json"
     review_mode = "interactive"
     review_scope = "session"
+    interactive_provider = "claude-code"
     if config_path.exists():
         try:
             config = json.loads(config_path.read_text())
             review_mode = config.get("review_mode", "interactive")
             review_scope = config.get("review_scope", "session")
+            interactive_provider = config.get("interactive_provider", "claude-code")
         except Exception:
             pass
 
     review_mode = os.environ.get("CLAUDE_DIFF_MODE", review_mode)
 
     if review_mode == "interactive":
-        run_interactive_review(edited_files, state)
+        run_interactive_review(edited_files, state, provider=interactive_provider)
         # always exits internally
 
     print_summary_header(edited_files)
