@@ -5,6 +5,9 @@ SessionStart hook for claude-diff-review.
 Initializes a fresh session state and cleans up stale sessions
 older than 24 hours.
 
+On first run (no config file yet), opens a short interactive setup
+wizard via /dev/tty — no LLM tokens consumed.
+
 Exit codes:
   0 = success
 """
@@ -13,6 +16,7 @@ import sys
 import os
 import json
 import time
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -25,7 +29,88 @@ from lib.state import (
 )
 
 
+# ── ANSI (only when writing to a real terminal) ──────────────────────
+BOLD  = "\033[1m"
+DIM   = "\033[2m"
+CYAN  = "\033[36m"
+GREEN = "\033[32m"
+RESET = "\033[0m"
+
+
+CONFIG_PATH = Path.home() / ".claude-diff-review" / "config.json"
+
+_REVIEW_MODES  = ["interactive", "vscode", "terminal", "summary"]
+_REVIEW_SCOPES = ["session", "file"]
+
+
+def _ask(tty, prompt: str, choices: list, default: str) -> str:
+    """
+    Write a single-line prompt to tty, read one answer.
+    Returns the default on empty input or if tty is unavailable.
+    """
+    choices_str = "/".join(
+        BOLD + c + RESET if c == default else DIM + c + RESET
+        for c in choices
+    )
+    tty.write(f"  {CYAN}?{RESET} {prompt} [{choices_str}]: ")
+    tty.flush()
+    answer = tty.readline().strip().lower()
+    return answer if answer in choices else default
+
+
+def _run_setup_wizard() -> None:
+    """
+    First-run interactive config wizard — writes ~/.claude-diff-review/config.json.
+    Silently skipped if no terminal is available.
+    """
+    try:
+        tty = open("/dev/tty", "r+")
+    except Exception:
+        return  # non-interactive environment — skip, use defaults
+
+    try:
+        tty.write(f"\n{BOLD}{CYAN}  ◆ claude-diff-review — first-run setup{RESET}\n")
+        tty.write(f"{DIM}  ──────────────────────────────────────{RESET}\n")
+        tty.write(
+            f"  {DIM}interactive{RESET}  Native VS Code side-by-side diff, per-hunk accept/reject\n"
+            f"  {DIM}vscode{RESET}       Open code --diff (view only, no in-editor accept/reject)\n"
+            f"  {DIM}terminal{RESET}     Coloured unified diff printed to the terminal\n"
+            f"  {DIM}summary{RESET}      File list with +/- counts only\n\n"
+        )
+
+        mode  = _ask(tty, "Review mode", _REVIEW_MODES,  "interactive")
+
+        tty.write(
+            f"\n  {DIM}session{RESET}  Show all diffs together when Claude finishes its turn\n"
+            f"  {DIM}file{RESET}     Show each file's diff as soon as Claude moves on to the next\n\n"
+        )
+
+        scope = _ask(tty, "Review scope", _REVIEW_SCOPES, "session")
+
+        config = {
+            "review_mode":  mode,
+            "review_scope": scope,
+            "auto_cleanup": True,
+        }
+        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        CONFIG_PATH.write_text(json.dumps(config, indent=2))
+
+        tty.write(
+            f"\n  {GREEN}✓{RESET} Config saved → {CONFIG_PATH}\n"
+            f"{DIM}  ──────────────────────────────────────{RESET}\n\n"
+        )
+    finally:
+        tty.close()
+
+
 def main():
+    # First-run: prompt for config if none exists yet
+    if not CONFIG_PATH.exists():
+        try:
+            _run_setup_wizard()
+        except Exception:
+            pass  # never block Claude on wizard failure
+
     # Clean up old sessions (non-blocking, best-effort)
     try:
         cleaned = cleanup_old_sessions(max_age_hours=24)

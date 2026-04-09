@@ -327,6 +327,31 @@ def cmd_finalize(args):
 
 
 
+def cmd_reconfigure(args):
+    """Re-run the interactive setup wizard to change review_mode and review_scope."""
+    hooks_dir = INSTALL_DIR / "hooks"
+    sys.path.insert(0, str(hooks_dir))
+    from session_start import _run_setup_wizard, CONFIG_PATH  # noqa: PLC0415
+
+    config_existed = CONFIG_PATH.exists()
+    if config_existed and not getattr(args, "force", False):
+        print(f"{DIM}Current config ({CONFIG_PATH}):{RESET}")
+        try:
+            cfg = json.loads(CONFIG_PATH.read_text())
+            for k, v in cfg.items():
+                print(f"  {BOLD}{k}{RESET}: {v}")
+        except Exception:
+            pass
+        print()
+
+    CONFIG_PATH.unlink(missing_ok=True)
+    _run_setup_wizard()
+
+    if not CONFIG_PATH.exists():
+        # wizard was skipped (no tty) — restore original if there was one
+        print(f"{YELLOW}⚠{RESET}  No terminal available — config unchanged.")
+
+
 def cmd_cleanup(args):
     """Remove all session data."""
     base = Path.home() / ".claude-diff-review" / "sessions"
@@ -492,6 +517,7 @@ def main():
   claude-diff restore src/x.py Reject changes to one file
   claude-diff accept           Accept all changes, clean up
   claude-diff finalize         Run interactive per-hunk review (no Claude re-engagement)
+  claude-diff reconfigure      Re-run the setup wizard to change review mode / scope
         """
     )
 
@@ -521,10 +547,10 @@ def main():
 
 
     # finalize
-    subs.add_parser(
-        "finalize",
-        help="Resolve remaining conflict markers (use after interactive review)",
-    )
+    subs.add_parser("finalize", help="Run interactive per-hunk review without re-engaging Claude")
+
+    # reconfigure
+    subs.add_parser("reconfigure", help="Re-run the setup wizard (change review mode / scope)")
 
 
     # cleanup
@@ -547,6 +573,7 @@ def main():
         "diff": cmd_diff,
         "config": cmd_config,
         "finalize": cmd_finalize,
+        "reconfigure": cmd_reconfigure,
         "cleanup": cmd_cleanup,
         "install": cmd_install,
         "uninstall": cmd_uninstall,
