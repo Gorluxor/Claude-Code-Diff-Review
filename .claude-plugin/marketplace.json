@@ -1,0 +1,20 @@
+{
+  "name": "claude-diff-review",
+  "interface": {
+    "displayName": "Claude Diff Review"
+  },
+  "plugins": [
+    {
+      "name": "claude-diff-review",
+      "source": {
+        "source": "local",
+        "path": ".."
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
