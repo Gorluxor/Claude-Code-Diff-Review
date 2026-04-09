@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.1.11] - 2026-04-09
+
+### Fixed
+
+- reconfigure slash command uses Claude UI instead of /dev/tty
+
+---
+
+
 ## [0.1.10] - 2026-04-09
 
 ### Fixed
