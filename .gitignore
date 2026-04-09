@@ -10,6 +10,6 @@ build/
 
 .omc
 .vscode
-examples/
+examples
 .claude/
 *_internal.md

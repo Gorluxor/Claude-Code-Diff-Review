@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.1.7] - 2026-04-09
+
+### Fixed
+
+- **Slash commands now appear in the CLI** — `plugin.json` was missing the `"commands"` and `"skills"` declarations, so the plugin manifest never registered the commands directory. Added both fields so Claude Code discovers and registers all slash commands on install.
+
+---
+
 ## [0.1.6] - 2026-04-09
 
 ### Added
