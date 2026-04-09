@@ -333,8 +333,8 @@ def cmd_reconfigure(args):
     sys.path.insert(0, str(hooks_dir))
     from session_start import _run_setup_wizard, CONFIG_PATH  # noqa: PLC0415
 
-    config_existed = CONFIG_PATH.exists()
-    if config_existed and not getattr(args, "force", False):
+    # Show current settings before prompting
+    if CONFIG_PATH.exists():
         print(f"{DIM}Current config ({CONFIG_PATH}):{RESET}")
         try:
             cfg = json.loads(CONFIG_PATH.read_text())
@@ -344,12 +344,26 @@ def cmd_reconfigure(args):
             pass
         print()
 
+    # Stash old config; only remove it if the wizard writes a new one
+    old_text = CONFIG_PATH.read_text() if CONFIG_PATH.exists() else None
     CONFIG_PATH.unlink(missing_ok=True)
     _run_setup_wizard()
 
-    if not CONFIG_PATH.exists():
-        # wizard was skipped (no tty) — restore original if there was one
-        print(f"{YELLOW}⚠{RESET}  No terminal available — config unchanged.")
+    if CONFIG_PATH.exists():
+        print(f"{GREEN}✓{RESET}  Config updated.")
+    else:
+        # Wizard couldn't run (no tty) — restore previous config or write defaults
+        if old_text is not None:
+            CONFIG_PATH.write_text(old_text)
+            print(f"{YELLOW}⚠{RESET}  No terminal available — previous config restored.")
+        else:
+            from session_start import _DEFAULTS  # noqa: PLC0415
+            CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            CONFIG_PATH.write_text(json.dumps(_DEFAULTS, indent=2))
+            print(
+                f"{YELLOW}⚠{RESET}  No terminal available — defaults written to {CONFIG_PATH}.\n"
+                f"  Run {BOLD}claude-diff reconfigure{RESET} from a real terminal to customise."
+            )
 
 
 def cmd_cleanup(args):

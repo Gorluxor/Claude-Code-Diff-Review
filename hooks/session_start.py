@@ -103,13 +103,40 @@ def _run_setup_wizard() -> None:
         tty.close()
 
 
-def main():
-    # First-run: prompt for config if none exists yet
+_DEFAULTS = {
+    "review_mode": "interactive",
+    "review_scope": "session",
+    "auto_cleanup": True,
+}
+
+
+def _ensure_config() -> None:
+    """
+    Guarantee a config file always exists.
+
+    On first run: try the interactive wizard (needs a real tty).
+    If the wizard can't run (no tty, CI, hook subprocess), fall back
+    to writing the defaults silently so the rest of the plugin works.
+    """
+    if CONFIG_PATH.exists():
+        return
+    try:
+        _run_setup_wizard()
+    except Exception:
+        pass
+    # If the wizard didn't create the file (no tty available), write defaults.
     if not CONFIG_PATH.exists():
-        try:
-            _run_setup_wizard()
-        except Exception:
-            pass  # never block Claude on wizard failure
+        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        CONFIG_PATH.write_text(json.dumps(_DEFAULTS, indent=2))
+        sys.stderr.write("[diff-review] Config created with defaults.\n")
+
+
+def main():
+    # First-run: ensure config exists (wizard or silent defaults)
+    try:
+        _ensure_config()
+    except Exception:
+        pass  # never block Claude
 
     # Clean up old sessions (non-blocking, best-effort)
     try:
