@@ -9,11 +9,15 @@ We use this to call the native `openDiff` RPC, which opens VS Code's built-in
 diff editor (side-by-side, with per-hunk Revert Selected Ranges) and blocks
 until the user accepts, rejects, or closes the tab.
 
-Only SSE transport is supported (WebSocket requires a third-party library).
+Both SSE and WebSocket transports are supported (stdlib only, no third-party deps).
 Falls back to terminal review if no IDE server is found or connection fails.
 """
 
+import base64
 import json
+import os
+import socket
+import struct
 import threading
 import urllib.request
 import urllib.error
@@ -28,6 +32,9 @@ def find_ide_server() -> Optional[dict]:
     Claude Code writes ~/.claude/ide/<PORT>.lock when the VS Code extension
     connects. The file contains JSON with transport type and optional auth token.
 
+    Prefers the lock file whose workspaceFolders includes the current working
+    directory, falling back to the first available lock file.
+
     Returns a dict with keys: port, transport, auth_token, ide_name
     Returns None if no active IDE server is found.
     """
@@ -35,20 +42,203 @@ def find_ide_server() -> Optional[dict]:
     if not ide_dir.exists():
         return None
 
+    cwd = str(Path.cwd().resolve())
+    best = None
+
     for lock_file in sorted(ide_dir.glob("*.lock")):
         try:
             port = int(lock_file.stem)
             data = json.loads(lock_file.read_text())
-            return {
+            entry = {
                 "port": port,
                 "transport": data.get("transport", "sse"),
                 "auth_token": data.get("authToken"),
                 "ide_name": data.get("ideName", "IDE"),
             }
+            # Prefer server whose workspace matches CWD
+            if any(cwd.startswith(str(Path(w).resolve()))
+                   for w in data.get("workspaceFolders", [])):
+                return entry
+            if best is None:
+                best = entry
         except Exception:
             continue
 
-    return None
+    return best
+
+
+def _ws_open_diff_in_ide(
+    server: dict,
+    file_path: str,
+    new_content: str,
+    tab_name: str,
+    timeout: int = 600,
+) -> Optional[str]:
+    """
+    WebSocket transport implementation of openDiff MCP RPC.
+
+    Implements the WebSocket protocol and MCP initialize handshake using only
+    Python stdlib (socket, struct, base64, os). No third-party libraries needed.
+
+    Returns: "FILE_SAVED" | "DIFF_REJECTED" | "TAB_CLOSED" | None
+    """
+    port = server["port"]
+    auth = server.get("auth_token")
+
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(10)
+        sock.connect(("localhost", port))
+
+        # ── HTTP → WebSocket upgrade ──────────────────────────────────────
+        ws_key = base64.b64encode(os.urandom(16)).decode()
+        handshake = "\r\n".join([
+            "GET / HTTP/1.1",
+            f"Host: localhost:{port}",
+            "Upgrade: websocket",
+            "Connection: Upgrade",
+            f"Sec-WebSocket-Key: {ws_key}",
+            "Sec-WebSocket-Version: 13",
+            *([ f"X-Claude-Code-Ide-Authorization: {auth}" ] if auth else []),
+            "\r\n",
+        ])
+        sock.sendall(handshake.encode())
+
+        buf = b""
+        while b"\r\n\r\n" not in buf:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            buf += chunk
+
+        if b" 101 " not in buf:
+            sock.close()
+            return None
+
+        # ── Frame send/recv helpers ───────────────────────────────────────
+
+        def send_text(text: str) -> None:
+            payload = text.encode("utf-8")
+            mask = os.urandom(4)
+            masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+            n = len(payload)
+            if n <= 125:
+                header = bytes([0x81, 0x80 | n]) + mask
+            elif n <= 65535:
+                header = bytes([0x81, 0xFE]) + struct.pack(">H", n) + mask
+            else:
+                header = bytes([0x81, 0xFF]) + struct.pack(">Q", n) + mask
+            sock.sendall(header + masked)
+
+        def recv_frame() -> tuple:
+            """Return (opcode, text). Transparently handles pings."""
+            while True:
+                hdr = b""
+                while len(hdr) < 2:
+                    hdr += sock.recv(2 - len(hdr))
+                opcode = hdr[0] & 0x0F
+                is_masked = hdr[1] & 0x80
+                n = hdr[1] & 0x7F
+
+                if n == 126:
+                    extra = b""
+                    while len(extra) < 2:
+                        extra += sock.recv(2 - len(extra))
+                    n = struct.unpack(">H", extra)[0]
+                elif n == 127:
+                    extra = b""
+                    while len(extra) < 8:
+                        extra += sock.recv(8 - len(extra))
+                    n = struct.unpack(">Q", extra)[0]
+
+                mk = b""
+                if is_masked:
+                    while len(mk) < 4:
+                        mk += sock.recv(4 - len(mk))
+
+                payload = b""
+                while len(payload) < n:
+                    payload += sock.recv(n - len(payload))
+                if is_masked:
+                    payload = bytes(b ^ mk[i % 4] for i, b in enumerate(payload))
+
+                if opcode == 0x9:  # ping → send pong and continue
+                    sock.sendall(bytes([0x8A, 0x80]) + os.urandom(4))
+                    continue
+                if opcode == 0x8:  # close
+                    raise ConnectionError("WebSocket closed by server")
+
+                return opcode, payload.decode("utf-8", errors="replace")
+
+        def rpc(msg: dict) -> dict:
+            send_text(json.dumps(msg))
+            while True:
+                _, text = recv_frame()
+                try:
+                    resp = json.loads(text)
+                    if resp.get("id") == msg.get("id"):
+                        return resp
+                except Exception:
+                    pass
+
+        # ── MCP initialize handshake ──────────────────────────────────────
+        init = rpc({
+            "jsonrpc": "2.0",
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "claude-diff-review", "version": "1.0"},
+            },
+            "id": 1,
+        })
+        if "error" in init:
+            sock.close()
+            return None
+
+        send_text(json.dumps({
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized",
+            "params": {},
+        }))
+
+        # ── openDiff call — block until user acts ─────────────────────────
+        sock.settimeout(timeout)
+        resp = rpc({
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "params": {
+                "name": "openDiff",
+                "arguments": {
+                    "old_file_path": file_path,
+                    "new_file_path": file_path,
+                    "new_file_contents": new_content,
+                    "tab_name": tab_name,
+                },
+            },
+            "id": 2,
+        })
+        sock.close()
+
+        content = (
+            resp.get("result", {}).get("content", [])
+            if isinstance(resp.get("result"), dict)
+            else []
+        )
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                val = item["text"].strip()
+                if val in ("FILE_SAVED", "DIFF_REJECTED", "TAB_CLOSED"):
+                    return val
+
+        return None
+
+    except Exception:
+        try:
+            sock.close()
+        except Exception:
+            pass
+        return None
 
 
 def open_diff_in_ide(
@@ -77,7 +267,7 @@ def open_diff_in_ide(
     Returns: "FILE_SAVED" | "DIFF_REJECTED" | "TAB_CLOSED" | None
     """
     if server.get("transport") == "ws":
-        return None  # WebSocket requires 'websockets' library — fall back to terminal
+        return _ws_open_diff_in_ide(server, file_path, new_content, tab_name, timeout)
 
     port = server["port"]
     auth = server.get("auth_token")

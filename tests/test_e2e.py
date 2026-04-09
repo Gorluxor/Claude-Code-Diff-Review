@@ -571,14 +571,14 @@ def main():
 
     shutil.rmtree(tmpdir_ide, ignore_errors=True)
 
-    # 13e: WebSocket transport falls back gracefully
-    step("WebSocket transport returns None (stdlib-only fallback)...")
+    # 13e: WebSocket transport attempts connection and returns None on failure
+    step("WebSocket transport returns None when server unreachable...")
     ws_server = {"port": 9999, "transport": "ws", "auth_token": None, "ide_name": "WSTest"}
     result_ws = open_diff_in_ide(ws_server, "/tmp/x.py", "content", "tab", timeout=1)
     if result_ws is None:
-        ok("WebSocket transport returned None (expected — no ws library)")
+        ok("WebSocket transport returned None (connection refused — correct fallback)")
     else:
-        fail(f"Expected None for ws transport, got {result_ws!r}")
+        fail(f"Expected None for unreachable ws server, got {result_ws!r}")
 
     # ── 14. Terminal review — per-hunk mock tty ──────────────────
     header("Terminal review — per-hunk mock tty")
@@ -766,7 +766,7 @@ def main():
     print(f"  {G}✓{R} Shadow dir: unwritable dir detected and session disabled")
     print(f"  {G}✓{R} IDE mock: find_ide_server reads lock files correctly")
     print(f"  {G}✓{R} IDE mock: FILE_SAVED / DIFF_REJECTED / TAB_CLOSED all handled")
-    print(f"  {G}✓{R} IDE mock: WebSocket transport returns None (no ws lib needed)")
+    print(f"  {G}✓{R} IDE mock: WebSocket transport returns None when server unreachable")
     print(f"  {G}✓{R} Terminal review: y/n/a/d per-hunk decisions")
     print(f"  {G}✓{R} Terminal review: no-tty mode accepts all hunks silently")
     print(f"  {G}✓{R} Reconstruction: mixed accept/reject produces correct file")
