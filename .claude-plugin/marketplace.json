@@ -1,19 +1,20 @@
 {
   "name": "claude-diff-review",
-  "interface": {
-    "displayName": "Claude Diff Review"
+  "owner": {
+    "name": "Aleksandar Cvejic"
   },
   "plugins": [
     {
       "name": "claude-diff-review",
-      "source": {
-        "source": "local",
-        "path": ".."
+      "source": "./",
+      "description": "Review Claude Code edits as consolidated VS Code diffs instead of approving them one-by-one.",
+      "version": "0.1.2",
+      "author": {
+        "name": "Aleksandar Cvejic"
       },
-      "policy": {
-        "installation": "AVAILABLE",
-        "authentication": "ON_INSTALL"
-      },
+      "homepage": "https://github.com/Gorluxor/Claude-Code-Diff-Review",
+      "repository": "https://github.com/Gorluxor/Claude-Code-Diff-Review",
+      "license": "Apache-2.0",
       "category": "Productivity"
     }
   ]
