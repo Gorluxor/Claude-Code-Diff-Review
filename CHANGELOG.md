@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.3.1] - 2026-04-09
+
+### Fixed
+
+- ask all reconfigure questions in a single AskUserQuestion call
+
+---
+
+
 ## [0.3.0] - 2026-04-09
 
 ### Added
