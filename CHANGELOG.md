@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.3.3] - 2026-04-09
+
+### Fixed
+
+- set Stop hook timeout to 600s (0 is invalid per schema)
+
+---
+
+
 ## [0.3.2] - 2026-04-09
 
 ### Fixed
