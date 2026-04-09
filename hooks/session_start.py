@@ -172,6 +172,9 @@ def main():
         state["edited_files"] = {}
         state["shadow_created"] = []
         state["previewed_files"] = []
+        state["current_file"] = None
+        state["decisions"] = {}
+        state["review_round"] = 0
         save_state(state)
 
     # Verify the shadow directory is readable and writable

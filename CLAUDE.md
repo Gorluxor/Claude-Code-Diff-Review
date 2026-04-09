@@ -25,16 +25,19 @@ CI also runs tests on every push and blocks the release job if they fail (`.gith
 ## Architecture
 
 ```
-bin/claude-diff       # CLI: status, accept, restore, diff, config, install, uninstall
+bin/claude-diff       # CLI: status, accept, diff, config, install, uninstall, pause, resume
 hooks/
   session_start.py   # SessionStart: init state, clean sessions older than 24h
-  pre_tool_use.py    # PreToolUse: capture originals; file-scope progressive preview
+  pre_tool_use.py    # PreToolUse: capture originals; file-transition progressive preview
   post_tool_use.py   # PostToolUse: track per-file edit counts
-  stop.py            # Stop: open VS Code diffs, print summary
+  stop.py            # Stop: slim dispatcher → delegates to lib/review
 lib/
-  state.py           # Shared: session dirs, shadow ops, state read/write, hook I/O
+  state.py           # Shared: session dirs, shadow ops, state read/write, hook I/O, round mgmt
+  diff.py            # Display: ANSI colors, format_path, diff stats, terminal/VS Code diff
+  review.py          # Review: IDE review, terminal per-hunk, copilot, re-engagement messages
+  ide.py             # MCP client: SSE/WebSocket openDiff RPC to VS Code
 tests/
-  test_e2e.py        # End-to-end lifecycle test
+  test_e2e.py        # End-to-end lifecycle test (23 tests)
 install.sh           # One-command installer
 ```
 

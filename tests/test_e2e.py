@@ -143,6 +143,15 @@ def main():
         os.environ["CLAUDE_SESSION_ID"] = "test-e2e-session"
         state = load_state()
 
+    # Verify new state fields
+    if state.get("current_file") is not None:
+        fail(f"current_file should be None, got {state.get('current_file')}")
+    if state.get("decisions") != {}:
+        fail(f"decisions should be empty dict, got {state.get('decisions')}")
+    if state.get("review_round") != 0:
+        fail(f"review_round should be 0, got {state.get('review_round')}")
+    ok("SessionStart initialized new state fields (current_file, decisions, review_round)")
+
     # ── 2. PreToolUse for app.py (first edit) ───────────────────
     step("PreToolUse: Claude wants to edit app.py...")
     result = run_hook("pre_tool_use.py", {
@@ -325,7 +334,7 @@ def main():
     shutil.rmtree(tmpdir, ignore_errors=True)
 
     # ── 11. Test review_scope=file (per-file progressive preview) ─
-    header("review_scope=file — per-file progressive preview")
+    header("review_scope=file — per-file progressive preview (current_file tracking)")
 
     tmpdir2 = tempfile.mkdtemp(prefix="cdr-test-file-scope-")
     src2 = Path(tmpdir2) / "src"
@@ -358,9 +367,11 @@ def main():
     state = load_state()
     if "previewed_files" not in state:
         fail("previewed_files missing from initial state")
-    ok("SessionStart: previewed_files initialized")
+    if state.get("current_file") is not None:
+        fail("current_file should be None after SessionStart")
+    ok("SessionStart: previewed_files and current_file initialized")
 
-    # Edit file_a (first edit — nothing to preview yet)
+    # Edit file_a (first edit — sets current_file to a, nothing to preview yet)
     run_hook("pre_tool_use.py", {
         "tool_name": "Edit",
         "tool_input": {"file_path": str(file_a)},
@@ -372,7 +383,15 @@ def main():
     }, env2)
     ok("Edited file_a")
 
-    # Edit file_b (new file — should trigger preview of file_a)
+    # Verify current_file is set to file_a
+    state = load_state()
+    abs_a = str(file_a.resolve())
+    if state.get("current_file") == abs_a:
+        ok(f"current_file correctly set to file_a")
+    else:
+        fail(f"current_file should be {abs_a}, got {state.get('current_file')}")
+
+    # Edit file_b (transition: a→b, should trigger preview of file_a)
     run_hook("pre_tool_use.py", {
         "tool_name": "Edit",
         "tool_input": {"file_path": str(file_b)},
@@ -386,7 +405,6 @@ def main():
 
     state = load_state()
     previewed = state.get("previewed_files", [])
-    abs_a = str(file_a.resolve())
     abs_b = str(file_b.resolve())
 
     if abs_a in previewed:
@@ -398,6 +416,39 @@ def main():
         ok("file_b NOT yet previewed (still being edited — correct)")
     else:
         fail("file_b should not be previewed before Stop fires")
+
+    # Verify current_file is now file_b
+    if state.get("current_file") == abs_b:
+        ok("current_file correctly updated to file_b")
+    else:
+        fail(f"current_file should be {abs_b}, got {state.get('current_file')}")
+
+    # ── 11b. Test A→B→A revisit pattern ─────────────────────────
+    step("Testing A→B→A revisit pattern...")
+
+    # Edit file_a again (transition: b→a, should trigger preview of file_b)
+    run_hook("pre_tool_use.py", {
+        "tool_name": "Edit",
+        "tool_input": {"file_path": str(file_a)},
+    }, env2)
+    file_a.write_text("x = 999\n")
+    run_hook("post_tool_use.py", {
+        "tool_name": "Edit",
+        "tool_input": {"file_path": str(file_a)},
+    }, env2)
+
+    state = load_state()
+    previewed = state.get("previewed_files", [])
+
+    if abs_b in previewed:
+        ok("file_b marked as previewed after A→B→A revisit")
+    else:
+        fail(f"file_b NOT in previewed_files after revisit: {previewed}")
+
+    if state.get("current_file") == abs_a:
+        ok("current_file correctly back to file_a after revisit")
+    else:
+        fail(f"current_file should be {abs_a}, got {state.get('current_file')}")
 
     # Restore original config
     if original_config is not None:
@@ -594,7 +645,7 @@ def main():
         def close(self): pass
 
 
-    # Import _review_file_hunks directly from the stop hook module
+    # Import _review_file_hunks from lib/review (re-exported via stop for compat)
     import importlib.util
     _stop_spec = importlib.util.spec_from_file_location("stop_hook", ROOT / "hooks" / "stop.py")
     stop_mod = importlib.util.module_from_spec(_stop_spec)
@@ -780,9 +831,8 @@ def main():
     _state_mod.capture_original(str(cop_file))
     _state_mod.record_edit(str(cop_file))
 
-    # Import the Copilot review function
-    import importlib
-    stop_cop = importlib.import_module("hooks.stop")
+    # Import the Copilot review function from lib/review
+    from lib.review import _run_copilot_review
 
     edited = _state_mod.get_edited_files()
 
@@ -792,7 +842,7 @@ def main():
     try:
         # _run_copilot_review calls sys.exit(0) — catch it
         try:
-            stop_cop._run_copilot_review(edited, {})
+            _run_copilot_review(edited, {})
         except SystemExit as e:
             exit_code = e.code
     finally:
@@ -826,7 +876,7 @@ def main():
     sys.stderr = io.StringIO()
     try:
         try:
-            stop_cop._run_copilot_review(edited_nogit, {})
+            _run_copilot_review(edited_nogit, {})
         except SystemExit as e:
             exit_code2 = e.code
     finally:
@@ -844,8 +894,56 @@ def main():
     shutil.rmtree(tmpdir_nogit, ignore_errors=True)
     cleanup_session()
 
+    # ── 17. Multi-round state management ─────────────────────────
+    header("Multi-round state management")
+
+    os.environ["CLAUDE_SESSION_ID"] = "test-multiround"
+    tmpdir_mr = tempfile.mkdtemp(prefix="cdr-multiround-")
+    os.environ["CLAUDE_WORKING_DIR"] = tmpdir_mr
+
+    from lib.state import clear_round, save_state as ss_mr
+
+    # Initialize session
+    run_hook("session_start.py", {}, {
+        "CLAUDE_SESSION_ID": "test-multiround",
+        "CLAUDE_WORKING_DIR": tmpdir_mr,
+    })
+
+    state = load_state()
+    if state.get("review_round") != 0:
+        fail(f"Expected review_round=0, got {state.get('review_round')}")
+    ok("Initial review_round = 0")
+
+    # Simulate some decisions
+    state["decisions"] = {"/tmp/a.py": "accepted", "/tmp/b.py": "rejected"}
+    state["current_file"] = "/tmp/b.py"
+    state["previewed_files"] = ["/tmp/a.py"]
+    ss_mr(state)
+
+    # Clear round
+    state = clear_round()
+    if state["review_round"] != 1:
+        fail(f"Expected review_round=1 after clear_round, got {state['review_round']}")
+    ok("review_round incremented to 1")
+
+    if state["current_file"] is not None:
+        fail(f"current_file should be None after clear_round, got {state['current_file']}")
+    ok("current_file reset to None")
+
+    if state["previewed_files"] != []:
+        fail(f"previewed_files should be empty after clear_round, got {state['previewed_files']}")
+    ok("previewed_files reset to []")
+
+    # Decisions should persist
+    if state.get("decisions", {}).get("/tmp/a.py") != "accepted":
+        fail(f"decisions should persist across rounds, got {state.get('decisions')}")
+    ok("decisions persist across rounds")
+
+    cleanup_session()
+    shutil.rmtree(tmpdir_mr, ignore_errors=True)
+
     header("All tests passed!")
-    print(f"  {G}✓{R} SessionStart initializes state")
+    print(f"  {G}✓{R} SessionStart initializes state (including new fields)")
     print(f"  {G}✓{R} PreToolUse captures original, returns 'allow'")
     print(f"  {G}✓{R} PreToolUse skips re-capture on subsequent edits")
     print(f"  {G}✓{R} PostToolUse tracks edit counts")
@@ -853,9 +951,9 @@ def main():
     print(f"  {G}✓{R} Stop hook prints diffs with correct +/- stats")
     print(f"  {G}✓{R} Shadow preserves original (not intermediate) state")
     print(f"  {G}✓{R} Restore brings back exact original content")
-    print(f"  {G}✓{R} review_scope=file: previewed_files initialized in state")
-    print(f"  {G}✓{R} review_scope=file: completed file marked previewed when Claude moves on")
-    print(f"  {G}✓{R} review_scope=file: current file NOT marked previewed prematurely")
+    print(f"  {G}✓{R} File-transition: current_file tracking detects A→B transitions")
+    print(f"  {G}✓{R} File-transition: A→B→A revisit correctly previews B")
+    print(f"  {G}✓{R} File-transition: current file NOT previewed prematurely")
     print(f"  {G}✓{R} Shadow dir: writable check passes in normal conditions")
     print(f"  {G}✓{R} Shadow dir: unwritable dir detected and session disabled")
     print(f"  {G}✓{R} IDE mock: find_ide_server reads lock files correctly")
@@ -866,6 +964,8 @@ def main():
     print(f"  {G}✓{R} Reconstruction: mixed accept/reject produces correct file")
     print(f"  {G}✓{R} Copilot provider: stages edited files in git")
     print(f"  {G}✓{R} Copilot provider: exits cleanly when not a git repo")
+    print(f"  {G}✓{R} Multi-round: clear_round increments round, resets per-round state")
+    print(f"  {G}✓{R} Multi-round: decisions persist across rounds")
     print()
 
 

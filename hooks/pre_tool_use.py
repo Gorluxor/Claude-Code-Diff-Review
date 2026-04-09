@@ -6,8 +6,8 @@ Fires before every Edit/Write/MultiEdit. Captures the original file
 to .shadow/ (first edit only), then returns "allow" so Claude's edit
 proceeds normally.
 
-In file-scope mode (review_scope=file), also opens VS Code diffs for
-any previously edited files when Claude moves on to a new file.
+In file-scope mode (review_scope=file), detects when Claude moves to a
+different file and opens a preview diff for the completed file.
 
 Exit codes:
   0 = allow (with JSON output)
@@ -34,22 +34,26 @@ from lib.state import (
 )
 
 
-def _open_vscode_diff_bg(abs_path: str) -> None:
-    """Open VS Code diff for abs_path vs its shadow in the background."""
+def _preview_completed_file(abs_path: str, review_mode: str) -> None:
+    """Open a preview diff for a file Claude has finished editing."""
     shadow = get_shadow_path(abs_path)
     real = Path(abs_path)
-    rel = real.name
 
-    for cmd in ("code", "code-insiders"):
-        try:
-            subprocess.Popen(
-                [cmd, "--diff", str(shadow), str(real), "--title", f"Review: {rel}"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            return
-        except FileNotFoundError:
-            continue
+    if not real.exists() or not shadow.exists():
+        return
+
+    if review_mode == "vscode":
+        rel = real.name
+        for cmd in ("code", "code-insiders"):
+            try:
+                subprocess.Popen(
+                    [cmd, "--diff", str(shadow), str(real), "--title", f"Review: {rel}"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                return
+            except FileNotFoundError:
+                continue
 
 
 def main():
@@ -61,7 +65,6 @@ def main():
     file_path = extract_file_path(hook_input)
 
     if not file_path:
-        # Can't determine file — allow anyway, don't block Claude
         hook_allow("No file path detected — passthrough")
         return
 
@@ -74,9 +77,9 @@ def main():
     # Capture the original before Claude touches it
     was_new = capture_original(file_path)
 
-    # ── Per-file progressive preview ──────────────────────────────────
-    # When review_scope=file and Claude just moved to a new file, open
-    # VS Code diffs for all previously edited but not-yet-previewed files.
+    # ── File-transition detection (progressive preview) ────────────────
+    # When review_scope=file and Claude moves to a different file, the
+    # previous file is "done" — preview it immediately.
     config_path = Path.home() / ".claude-diff-review" / "config.json"
     review_scope = "session"
     review_mode = "vscode"
@@ -88,27 +91,23 @@ def main():
         except Exception:
             pass
 
-    if review_scope == "file" and was_new:
-        # Claude moved to a new file — preview completed files.
-        # Reload state because capture_original() may have updated it.
+    if review_scope == "file":
+        # Reload state (capture_original may have updated it)
         state = load_state()
         incoming_abs = str(Path(file_path).resolve())
-        previewed = set(state.get("previewed_files", []))
-        newly_previewed = []
+        previous_file = state.get("current_file")
 
-        for edited_abs in state.get("edited_files", {}):
-            if edited_abs in previewed:
-                continue
-            if edited_abs == incoming_abs:
-                # Don't preview the file Claude is about to start — not done yet
-                continue
-            if review_mode == "vscode":
-                _open_vscode_diff_bg(edited_abs)
-            newly_previewed.append(edited_abs)
+        # Detect file transition: Claude moved from one file to another
+        if previous_file and previous_file != incoming_abs:
+            previewed = state.get("previewed_files", [])
+            if previous_file not in previewed:
+                _preview_completed_file(previous_file, review_mode)
+                previewed.append(previous_file)
+                state["previewed_files"] = previewed
 
-        if newly_previewed:
-            state["previewed_files"] = list(previewed | set(newly_previewed))
-            save_state(state)
+        # Track what Claude is currently editing
+        state["current_file"] = incoming_abs
+        save_state(state)
 
     if was_new:
         context = f"[diff-review] Captured original: {os.path.basename(file_path)}"

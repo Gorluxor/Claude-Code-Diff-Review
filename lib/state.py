@@ -76,6 +76,9 @@ def load_state() -> dict:
         "binary_files": [],       # paths detected as binary
         "new_files": [],          # paths that didn't exist before
         "previewed_files": [],    # paths already opened in VS Code (file scope)
+        "current_file": None,     # file Claude is currently editing (transition detection)
+        "decisions": {},          # per-file review decisions: {path: "accepted"|"rejected"|"modified"}
+        "review_round": 0,        # edit→review→re-edit cycle counter
         "session_start": None,
         "auto_open_diff": True,   # open VS Code diffs automatically on Stop
         "mode": "review",         # "review" = show diffs, "auto" = skip diffs
@@ -176,6 +179,26 @@ def get_edited_files() -> dict:
     """Return dict of {absolute_path: edit_count} for all edited files."""
     state = load_state()
     return state.get("edited_files", {})
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Round management (multi-round edit→review→re-edit)
+# ──────────────────────────────────────────────────────────────────────
+
+def clear_round() -> dict:
+    """
+    Reset per-round state for a new edit→review cycle.
+
+    Increments review_round, clears current_file and previewed_files.
+    Does NOT clear edited_files, shadow_created, or decisions (those accumulate).
+    Returns the updated state.
+    """
+    state = load_state()
+    state["current_file"] = None
+    state["previewed_files"] = []
+    state["review_round"] = state.get("review_round", 0) + 1
+    save_state(state)
+    return state
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -308,17 +331,13 @@ def extract_file_path(hook_input: dict) -> Optional[str]:
     """
     tool_input = hook_input.get("tool_input", {})
 
-    # Edit tool: has file_path
+    # Edit / MultiEdit: has file_path
     if "file_path" in tool_input:
         return tool_input["file_path"]
 
-    # Write tool: has file_path
+    # Write tool: has path
     if "path" in tool_input:
         return tool_input["path"]
-
-    # MultiEdit: has file_path
-    if "file_path" in tool_input:
-        return tool_input["file_path"]
 
     # Fallback: check environment variable
     env_path = os.environ.get("CLAUDE_TOOL_INPUT_FILE_PATH")
