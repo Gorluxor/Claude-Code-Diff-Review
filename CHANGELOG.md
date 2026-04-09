@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.2.0] - 2026-04-09
+
+### Added
+
+- add pause/resume, CI tests, slash command optimizations
+
+### Changed
+
+- Merge branch 'main' of https://github.com/Gorluxor/Claude-Code-Diff-Review into main
+
+---
+
+
 ## [0.1.11] - 2026-04-09
 
 ### Fixed
