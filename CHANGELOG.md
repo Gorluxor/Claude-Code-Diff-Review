@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.3.0] - 2026-04-09
+
+### Added
+
+- add Copilot interactive provider + tests
+
+### Fixed
+
+- restore pause.md slash command content (was empty)
+- use shadow/real as separate old/new paths in openDiff
+
+---
+
+
 ## [0.2.2] - 2026-04-09
 
 ### Fixed
