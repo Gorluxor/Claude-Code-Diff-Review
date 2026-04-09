@@ -1,13 +1,17 @@
 {
   "name": "claude-diff-review",
   "description": "Review Claude Code edits as consolidated VS Code diffs instead of approving them one-by-one. Auto-approves edits, captures originals in shadow storage, then opens clean per-file diffs when Claude finishes.",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "author": {
     "name": "Aleksandar Cvejic"
   },
   "homepage": "https://github.com/Gorluxor/Claude-Code-Diff-Review",
   "repository": "https://github.com/Gorluxor/Claude-Code-Diff-Review",
   "license": "Apache-2.0",
-  "commands": ["./.claude-plugin/commands/"],
-  "skills": ["./skills/"]
+  "commands": [
+    "./.claude-plugin/commands/"
+  ],
+  "skills": [
+    "./skills/"
+  ]
 }
