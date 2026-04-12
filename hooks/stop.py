@@ -36,6 +36,7 @@ from lib.state import (
     save_state,
     is_paused,
     clear_round,
+    log_event,
 )
 from lib.diff import (
     RESET, BOLD, DIM, RED, GREEN, YELLOW, CYAN, MAGENTA,
@@ -50,15 +51,18 @@ from lib.review import _review_file_hunks, _run_copilot_review  # noqa: F401
 
 def main():
     if is_paused():
+        log_event("stop", "Paused — skipping review")
         sys.exit(0)
 
     state = load_state()
 
     if state.get("mode") == "auto":
+        log_event("stop", "Mode: auto — skipping review")
         sys.exit(0)
 
     edited_files = get_edited_files()
     if not edited_files:
+        log_event("stop", "No edited files — nothing to review")
         sys.exit(0)
 
     # ── Read config ─────────────────────────────────────────────────
@@ -76,6 +80,13 @@ def main():
             pass
 
     review_mode = os.environ.get("CLAUDE_DIFF_MODE", review_mode)
+    log_event(
+        "stop", "Stop hook fired",
+        review_mode=review_mode,
+        scope=review_scope,
+        provider=interactive_provider,
+        tracked_files=len(edited_files),
+    )
 
     # ── Handle round transition ─────────────────────────────────────
     # If there are decisions from a previous round, filter files
@@ -89,16 +100,21 @@ def main():
     }
 
     if not files_to_review:
+        log_event("stop", "All files already accepted in previous round(s) — exiting")
         sys.stderr.write(
             f"\n{DIM}  [diff-review] All files already accepted in previous round(s).{RESET}\n"
         )
         sys.exit(0)
+
+    log_event("stop", "Files to review", count=len(files_to_review),
+              files=",".join(os.path.basename(p) for p in sorted(files_to_review)))
 
     # ── Interactive mode ────────────────────────────────────────────
     if review_mode == "interactive":
         # Clear per-round state for next cycle
         state["current_file"] = None
         save_state(state)
+        log_event("stop", "Dispatching to interactive review", provider=interactive_provider)
         run_interactive_review(files_to_review, state, provider=interactive_provider)
         # always exits internally
 

@@ -27,6 +27,7 @@ from lib.state import (
     get_session_dir,
     check_shadow_dir_permissions,
     is_paused,
+    log_event,
 )
 
 
@@ -152,6 +153,7 @@ def main():
 
     # If globally paused, emit a minimal context note and exit
     if is_paused():
+        log_event("session_start", "Paused — skipping session init")
         print(json.dumps({"additionalContext": "[claude-diff-review is paused]"}))
         sys.exit(0)
 
@@ -162,6 +164,7 @@ def main():
             sys.stderr.write(
                 f"[diff-review] Cleaned {cleaned} stale session(s)\n"
             )
+            log_event("session_start", f"Cleaned stale sessions", count=cleaned)
     except Exception:
         pass
 
@@ -177,6 +180,19 @@ def main():
     state["review_round"] = 0
     save_state(state)
 
+    # Load config for logging
+    try:
+        config = json.loads(CONFIG_PATH.read_text()) if CONFIG_PATH.exists() else {}
+        log_event(
+            "session_start", "Session initialized",
+            session_id=os.environ.get("CLAUDE_SESSION_ID", "default"),
+            review_mode=config.get("review_mode", "interactive"),
+            scope=config.get("review_scope", "session"),
+            provider=config.get("interactive_provider", "claude-code"),
+        )
+    except Exception:
+        log_event("session_start", "Session initialized")
+
     # Verify the shadow directory is readable and writable
     perm_ok, perm_err = check_shadow_dir_permissions()
     if not perm_ok:
@@ -184,8 +200,11 @@ def main():
             f"[diff-review] ⚠  Shadow directory not accessible: {perm_err}\n"
             "[diff-review] Diff tracking disabled for this session.\n"
         )
+        log_event("session_start", "Shadow dir NOT accessible — mode set to auto", error=perm_err)
         state["mode"] = "auto"
         save_state(state)
+    else:
+        log_event("session_start", "Shadow dir OK")
 
     session_dir = get_session_dir()
     sys.stderr.write(

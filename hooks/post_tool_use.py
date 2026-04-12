@@ -21,6 +21,7 @@ from lib.state import (
     record_edit,
     load_state,
     is_paused,
+    log_event,
 )
 
 
@@ -40,9 +41,8 @@ def main():
 
     count = record_edit(file_path)
 
-    # Optional: output additional context so Claude knows the edit was tracked
-    # (This shows up in verbose mode with Ctrl+O)
     basename = os.path.basename(file_path)
+    log_event("post_tool_use", "Edit recorded", file=basename, count=count)
     sys.stderr.write(f"[diff-review] Tracked edit #{count} to {basename}\n")
     sys.exit(0)
 

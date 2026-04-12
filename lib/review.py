@@ -17,6 +17,7 @@ from lib.state import (
     get_working_dir,
     load_state,
     save_state,
+    log_event,
 )
 from lib.diff import (
     RESET, BOLD, DIM, RED, GREEN, YELLOW, CYAN, MAGENTA,
@@ -109,6 +110,13 @@ def _run_ide_review(
     """
     from lib.ide import open_diff_in_ide
 
+    log_event(
+        "review", "IDE review started",
+        ide=ide_server.get("ide_name", "IDE"),
+        port=ide_server["port"],
+        transport=ide_server.get("transport", "sse"),
+    )
+
     sys.stderr.write(f"\n{BOLD}{MAGENTA}{'─' * 60}{RESET}\n")
     sys.stderr.write(f"{BOLD}{MAGENTA}  ◆ claude-diff-review — interactive (VS Code){RESET}\n")
     sys.stderr.write(
@@ -132,6 +140,8 @@ def _run_ide_review(
     for abs_path in sorted(edited_files):
         # Skip files already previewed progressively or accepted in previous rounds
         if abs_path in previewed or abs_path in accepted_prev:
+            log_event("review", "File skipped", file=os.path.basename(abs_path),
+                      reason="previewed" if abs_path in previewed else "accepted_prev")
             continue
 
         real = Path(abs_path)
@@ -139,6 +149,8 @@ def _run_ide_review(
         rel = format_path(abs_path)
 
         if not real.exists() or abs_path in state.get("binary_files", []):
+            log_event("review", "File skipped", file=os.path.basename(abs_path),
+                      reason="missing_or_binary")
             continue
 
         try:
@@ -148,9 +160,11 @@ def _run_ide_review(
             continue
 
         if original_content == claude_content:
+            log_event("review", "File unchanged — skipped", file=os.path.basename(abs_path))
             sys.stderr.write(f"  {DIM}–  {rel} (unchanged){RESET}\n")
             continue
 
+        log_event("review", "openDiff called", file=os.path.basename(abs_path))
         sys.stderr.write(f"  {CYAN}▶{RESET}  {BOLD}{rel}{RESET}  {DIM}(opening diff…){RESET}\n")
         sys.stderr.flush()
 
@@ -158,6 +172,9 @@ def _run_ide_review(
             ide_server, str(shadow), str(real),
             f"Review: {rel}", timeout=600,
         )
+
+        log_event("review", "openDiff response", file=os.path.basename(abs_path),
+                  response=response if response is not None else "None(RPC_FAILED)")
 
         if response is None:
             rpc_none_count += 1
@@ -220,6 +237,8 @@ def _run_ide_review(
     # If ALL RPC calls failed (none responded), the IDE connection is broken —
     # fall back to terminal review instead of silently accepting everything.
     if rpc_none_count > 0 and rpc_responded_count == 0:
+        log_event("review", "All RPC calls failed — falling back to terminal review",
+                  failed=rpc_none_count)
         sys.stderr.write(
             f"\n  {YELLOW}⚠  IDE openDiff RPC failed for all {rpc_none_count} file(s).{RESET}\n"
             f"  {DIM}Falling back to terminal review…{RESET}\n"
@@ -231,9 +250,16 @@ def _run_ide_review(
     # Record decisions in state
     _record_decisions(decisions, state)
 
+    rejected = sum(1 for d in decisions.values() if d["type"] == "rejected")
+    modified = sum(1 for d in decisions.values() if d["type"] == "modified")
+    accepted = rpc_responded_count - len(decisions)
+    log_event("review", "IDE review complete",
+              accepted=accepted, rejected=rejected, modified=modified)
+
     sys.stderr.write(f"\n{DIM}{'─' * 60}{RESET}\n")
 
     if decisions and re_engage:
+        log_event("review", "Re-engaging Claude", files_with_changes=len(decisions))
         sys.stderr.write(
             f"  {YELLOW}{len(decisions)} file(s) had rejections/modifications "
             f"— re-engaging Claude…{RESET}\n"
@@ -397,6 +423,7 @@ def _review_file_hunks(abs_path: str, tty) -> dict:
 
 def _run_terminal_review(edited_files: dict, state: dict, re_engage: bool) -> None:
     """Terminal per-hunk review fallback when no VS Code IDE is connected."""
+    log_event("review", "Terminal review started", files=len(edited_files))
     sys.stderr.write(f"\n{BOLD}{MAGENTA}{'─' * 60}{RESET}\n")
     sys.stderr.write(f"{BOLD}{MAGENTA}  ◆ claude-diff-review — interactive (terminal){RESET}\n")
     sys.stderr.write(f"{DIM}  No VS Code IDE connection — using terminal review{RESET}\n")
@@ -433,6 +460,8 @@ def _run_terminal_review(edited_files: dict, state: dict, re_engage: bool) -> No
         total_accepted += result["accepted"]
         total_rejected += result["rejected"]
         rel = format_path(abs_path)
+        log_event("review", "Terminal hunk decision", file=os.path.basename(abs_path),
+                  accepted=result["accepted"], rejected=result["rejected"])
         if result["rejected"]:
             all_rejections[abs_path] = result
             sys.stderr.write(
@@ -462,6 +491,9 @@ def _run_terminal_review(edited_files: dict, state: dict, re_engage: bool) -> No
         else:
             decisions[abs_path] = "accepted"
     _record_decisions_simple(decisions, state)
+    log_event("review", "Terminal review complete",
+              total_accepted=total_accepted, total_rejected=total_rejected,
+              files_rejected=len(all_rejections))
 
     if all_rejections and re_engage:
         decisions_detail = {}

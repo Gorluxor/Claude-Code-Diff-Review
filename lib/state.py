@@ -43,6 +43,28 @@ def get_state_file() -> Path:
     return get_session_dir() / "state.json"
 
 
+def get_log_file() -> Path:
+    """Return path to the session events log file."""
+    return get_session_dir() / "events.log"
+
+
+def log_event(hook: str, message: str, **kwargs) -> None:
+    """
+    Append a timestamped event to the session events.log file.
+
+    Format: 2026-04-12 13:37:51  [hook]  message  key=val  key2=val2
+    Never raises — logging must never block or crash Claude.
+    """
+    try:
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        extras = ("  " + "  ".join(f"{k}={v}" for k, v in kwargs.items())) if kwargs else ""
+        line = f"{ts}  [{hook}]  {message}{extras}\n"
+        with open(get_log_file(), "a") as fh:
+            fh.write(line)
+    except Exception:
+        pass
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Working directory (project root)
 # ──────────────────────────────────────────────────────────────────────

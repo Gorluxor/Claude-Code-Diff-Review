@@ -6,6 +6,7 @@ Commands:
   status            Show current session state and tracked files
   accept            Accept all changes and clean up shadow copies
   diff [path]       Open VS Code diff for one or all tracked files
+  log               Show full event log for the current session
   config            Show or edit configuration (--wizard to re-run setup)
   install           Install hooks into Claude Code settings
   uninstall         Remove hooks from Claude Code settings
@@ -33,6 +34,7 @@ from lib.state import (
     get_shadow_path,
     get_working_dir,
     get_session_dir,
+    get_log_file,
     cleanup_session,
 )
 
@@ -295,6 +297,70 @@ def _run_config_wizard(current_config: dict):
             print(f"{YELLOW}⚠{RESET}  No terminal available — defaults written.")
 
 
+def cmd_log(args):
+    """Show the session event log."""
+    log_file = get_log_file()
+    if not log_file.exists():
+        print(f"{DIM}No events logged yet for this session.{RESET}")
+        return
+
+    # Color map per hook
+    hook_colors = {
+        "session_start": CYAN,
+        "pre_tool_use":  GREEN,
+        "post_tool_use": GREEN,
+        "stop":          MAGENTA,
+        "review":        YELLOW,
+        "ide":           BLUE,
+    }
+
+    lines = log_file.read_text().splitlines()
+    if args.lines:
+        lines = lines[-args.lines:]
+
+    if not lines:
+        print(f"{DIM}Log is empty.{RESET}")
+        return
+
+    print(f"\n{BOLD}{MAGENTA}◆ claude-diff-review — event log{RESET}")
+    print(f"{DIM}  {log_file}{RESET}\n")
+
+    for line in lines:
+        # Format: "2026-04-12 13:37:51  [hook]  message  key=val"
+        parts = line.split("  ", 3)
+        if len(parts) < 3:
+            print(f"  {DIM}{line}{RESET}")
+            continue
+        ts, hook_raw, rest = parts[0], parts[1], "  ".join(parts[2:])
+        hook_name = hook_raw.strip("[]")
+        color = hook_colors.get(hook_name, DIM)
+        print(f"  {DIM}{ts}{RESET}  {color}{hook_raw}{RESET}  {rest}")
+
+    print()
+
+    if args.follow:
+        import time as _time
+        print(f"{DIM}  (following — Ctrl+C to stop){RESET}\n")
+        try:
+            with open(log_file) as fh:
+                fh.seek(0, 2)  # seek to end
+                while True:
+                    line = fh.readline()
+                    if line:
+                        parts = line.rstrip().split("  ", 3)
+                        if len(parts) >= 3:
+                            ts, hook_raw, rest = parts[0], parts[1], "  ".join(parts[2:])
+                            hook_name = hook_raw.strip("[]")
+                            color = hook_colors.get(hook_name, DIM)
+                            print(f"  {DIM}{ts}{RESET}  {color}{hook_raw}{RESET}  {rest}")
+                        else:
+                            print(f"  {DIM}{line.rstrip()}{RESET}")
+                    else:
+                        _time.sleep(0.3)
+        except KeyboardInterrupt:
+            pass
+
+
 def cmd_pause(args):
     """Globally pause diff tracking — hooks fire but do nothing."""
     config = load_config()
@@ -456,6 +522,9 @@ def main():
   claude-diff diff             Open all diffs in VS Code
   claude-diff diff src/app.py  Open diff for one file
   claude-diff accept           Accept all changes, clean up
+  claude-diff log              Show full event log for this session
+  claude-diff log -f           Follow log in real time
+  claude-diff log -n 50        Show last 50 log lines
   claude-diff config --wizard  Re-run the interactive setup wizard
   claude-diff pause            Pause diff tracking
   claude-diff resume           Resume diff tracking
@@ -481,6 +550,13 @@ def main():
     p_config.add_argument("value", nargs="?", help="New value")
     p_config.add_argument("--wizard", action="store_true", help="Re-run the interactive setup wizard")
 
+    # log
+    p_log = subs.add_parser("log", help="Show session event log")
+    p_log.add_argument("--lines", "-n", type=int, default=None,
+                       help="Show last N lines (default: all)")
+    p_log.add_argument("--follow", "-f", action="store_true",
+                       help="Follow log in real time (like tail -f)")
+
     # pause / resume
     subs.add_parser("pause",  help="Pause diff tracking globally (hooks do nothing)")
     subs.add_parser("resume", help="Resume diff tracking")
@@ -496,13 +572,14 @@ def main():
     args = parser.parse_args()
 
     commands = {
-        "status": cmd_status,
-        "accept": cmd_accept,
-        "diff": cmd_diff,
-        "config": cmd_config,
-        "pause":  cmd_pause,
-        "resume": cmd_resume,
-        "install": cmd_install,
+        "status":    cmd_status,
+        "accept":    cmd_accept,
+        "diff":      cmd_diff,
+        "config":    cmd_config,
+        "log":       cmd_log,
+        "pause":     cmd_pause,
+        "resume":    cmd_resume,
+        "install":   cmd_install,
         "uninstall": cmd_uninstall,
     }
 

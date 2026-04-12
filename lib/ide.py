@@ -25,6 +25,13 @@ import urllib.error
 from pathlib import Path
 from typing import Optional
 
+# Import log_event; fall back silently if state module is unavailable
+try:
+    from lib.state import log_event as _log_event
+except ImportError:
+    def _log_event(hook: str, message: str, **kwargs) -> None:  # type: ignore[misc]
+        pass
+
 
 def _dbg(msg: str) -> None:
     sys.stderr.write(f"[diff-review:ide] {msg}\n")
@@ -70,6 +77,9 @@ def find_ide_server() -> Optional[dict]:
             if any(cwd.startswith(str(Path(w).resolve()))
                    for w in workspaces):
                 _dbg(f"  → Matched CWD, using port {port}")
+                _log_event("ide", "IDE server found (CWD match)",
+                           port=port, transport=transport,
+                           ide=data.get("ideName", "IDE"))
                 return entry
             if best is None:
                 best = entry
@@ -79,8 +89,12 @@ def find_ide_server() -> Optional[dict]:
 
     if best:
         _dbg(f"No CWD match — falling back to port {best['port']}")
+        _log_event("ide", "IDE server found (no CWD match)",
+                   port=best["port"], transport=best.get("transport", "sse"),
+                   ide=best.get("ide_name", "IDE"))
     else:
         _dbg("No IDE lock files found")
+        _log_event("ide", "No IDE server found")
     return best
 
 
@@ -132,9 +146,11 @@ def _ws_open_diff_in_ide(
 
         if b" 101 " not in buf:
             _dbg(f"WS: upgrade failed — response: {buf[:200]!r}")
+            _log_event("ide", "WS upgrade failed", port=port)
             sock.close()
             return None
         _dbg("WS: upgrade OK (101 Switching Protocols)")
+        _log_event("ide", "WS connected + upgraded", port=port)
 
         # ── Frame send/recv helpers ───────────────────────────────────────
 
@@ -216,9 +232,11 @@ def _ws_open_diff_in_ide(
         })
         if "error" in init:
             _dbg(f"WS: MCP initialize error: {init['error']}")
+            _log_event("ide", "WS MCP initialize failed", error=init["error"])
             sock.close()
             return None
         _dbg("WS: MCP initialized OK")
+        _log_event("ide", "WS MCP initialized")
 
         send_text(json.dumps({
             "jsonrpc": "2.0",
@@ -260,13 +278,16 @@ def _ws_open_diff_in_ide(
                 val = item["text"].strip()
                 if val in ("FILE_SAVED", "DIFF_REJECTED", "TAB_CLOSED"):
                     _dbg(f"WS: openDiff result = {val}")
+                    _log_event("ide", "WS openDiff result", result=val)
                     return val
 
         _dbg(f"WS: no recognized result in response content: {content}")
+        _log_event("ide", "WS openDiff — no recognized result", content=str(content)[:120])
         return None
 
     except Exception as e:
         _dbg(f"WS: exception: {e!r}")
+        _log_event("ide", "WS exception", error=repr(e)[:120])
         try:
             sock.close()
         except Exception:
@@ -351,8 +372,10 @@ def open_diff_in_ide(
 
     # Wait for the session endpoint URL (sent immediately on connect)
     if not endpoint_ready.wait(timeout=10) or not endpoint_url[0]:
+        _log_event("ide", "SSE endpoint not received (timeout or connection failure)", port=port)
         done.set()
         return None
+    _log_event("ide", "SSE endpoint ready", port=port, endpoint=str(endpoint_url[0])[:60])
 
     # Resolve relative endpoint to full URL
     ep = endpoint_url[0]
@@ -386,7 +409,9 @@ def open_diff_in_ide(
             method="POST",
         )
         urllib.request.urlopen(req, timeout=15).close()
-    except Exception:
+        _log_event("ide", "SSE openDiff RPC sent", port=port)
+    except Exception as e:
+        _log_event("ide", "SSE openDiff RPC send failed", port=port, error=repr(e)[:120])
         done.set()
         return None
 
@@ -408,6 +433,7 @@ def _handle_message(data: str, result: dict, done: threading.Event) -> None:
             if isinstance(item, dict) and item.get("type") == "text":
                 text = item["text"].strip()
                 if text in ("FILE_SAVED", "DIFF_REJECTED", "TAB_CLOSED"):
+                    _log_event("ide", "SSE openDiff result", result=text)
                     result["value"] = text
                     done.set()
                     return

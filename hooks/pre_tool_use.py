@@ -31,6 +31,7 @@ from lib.state import (
     save_state,
     get_shadow_path,
     is_paused,
+    log_event,
 )
 
 
@@ -74,8 +75,15 @@ def main():
         hook_allow("Mode: auto — skipping shadow capture")
         return
 
+    basename = os.path.basename(file_path)
+
     # Capture the original before Claude touches it
     was_new = capture_original(file_path)
+    log_event(
+        "pre_tool_use",
+        "Captured original" if was_new else "Already shadowed",
+        file=basename,
+    )
 
     # If this is the first touch of the file this session, clear any stale
     # decision (e.g. "accepted" left over from a previous session when
@@ -85,9 +93,11 @@ def main():
         decisions = state.get("decisions", {})
         abs_path = str(Path(file_path).resolve())
         if abs_path in decisions:
+            old_decision = decisions[abs_path]
             del decisions[abs_path]
             state["decisions"] = decisions
             save_state(state)
+            log_event("pre_tool_use", "Cleared stale decision", file=basename, was=old_decision)
 
     # ── File-transition detection (progressive preview) ────────────────
     # When review_scope=file and Claude moves to a different file, the
@@ -116,13 +126,18 @@ def main():
                 _preview_completed_file(previous_file, review_mode)
                 previewed.append(previous_file)
                 state["previewed_files"] = previewed
+                log_event(
+                    "pre_tool_use", "File transition — progressive preview",
+                    from_file=os.path.basename(previous_file),
+                    to_file=basename,
+                )
 
         # Track what Claude is currently editing
         state["current_file"] = incoming_abs
         save_state(state)
 
     if was_new:
-        context = f"[diff-review] Captured original: {os.path.basename(file_path)}"
+        context = f"[diff-review] Captured original: {basename}"
     else:
         context = ""
 
