@@ -8,7 +8,7 @@
       "name": "claude-diff-review",
       "source": "./",
       "description": "Review Claude Code edits as consolidated VS Code diffs instead of approving them one-by-one.",
-      "version": "0.5.2",
+      "version": "0.5.3",
       "author": {
         "name": "Aleksandar Cvejic"
       },

@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.5.3] - 2026-04-12
+
+### Fixed
+
+- fall back to terminal review when IDE openDiff RPC fails for all files
+
+---
+
+
 ## [0.5.2] - 2026-04-12
 
 ### Fixed

@@ -126,6 +126,9 @@ def _run_ide_review(
     previewed = set(state.get("previewed_files", []))
     accepted_prev = {p for p, d in state.get("decisions", {}).items() if d == "accepted"}
 
+    rpc_none_count = 0   # files where openDiff returned None (RPC failure)
+    rpc_responded_count = 0  # files where openDiff returned a real response
+
     for abs_path in sorted(edited_files):
         # Skip files already previewed progressively or accepted in previous rounds
         if abs_path in previewed or abs_path in accepted_prev:
@@ -155,6 +158,16 @@ def _run_ide_review(
             ide_server, str(shadow), str(real),
             f"Review: {rel}", timeout=600,
         )
+
+        if response is None:
+            rpc_none_count += 1
+            sys.stderr.write(
+                f"  {YELLOW}?{RESET}  {BOLD}{rel}{RESET}  "
+                f"{DIM}no IDE response — RPC failed{RESET}\n"
+            )
+            continue
+
+        rpc_responded_count += 1
 
         if response == "DIFF_REJECTED":
             real.write_text(original_content)
@@ -200,12 +213,20 @@ def _run_ide_review(
                 )
 
         else:
-            label = "no response — kept Claude's version" if response is None else "accepted"
-            color = YELLOW if response is None else GREEN
-            marker = "?" if response is None else "✓"
             sys.stderr.write(
-                f"  {color}{marker}{RESET}  {BOLD}{rel}{RESET}  {DIM}{label}{RESET}\n"
+                f"  {GREEN}✓{RESET}  {BOLD}{rel}{RESET}  {DIM}accepted{RESET}\n"
             )
+
+    # If ALL RPC calls failed (none responded), the IDE connection is broken —
+    # fall back to terminal review instead of silently accepting everything.
+    if rpc_none_count > 0 and rpc_responded_count == 0:
+        sys.stderr.write(
+            f"\n  {YELLOW}⚠  IDE openDiff RPC failed for all {rpc_none_count} file(s).{RESET}\n"
+            f"  {DIM}Falling back to terminal review…{RESET}\n"
+        )
+        sys.stderr.write(f"{DIM}{'─' * 60}{RESET}\n\n")
+        _run_terminal_review(edited_files, state, re_engage)
+        return  # _run_terminal_review calls sys.exit(0)
 
     # Record decisions in state
     _record_decisions(decisions, state)
