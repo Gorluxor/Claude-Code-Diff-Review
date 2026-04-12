@@ -77,6 +77,18 @@ def main():
     # Capture the original before Claude touches it
     was_new = capture_original(file_path)
 
+    # If this is the first touch of the file this session, clear any stale
+    # decision (e.g. "accepted" left over from a previous session when
+    # SessionStart didn't run — mid-session plugin enable via /reload-plugins).
+    if was_new:
+        state = load_state()
+        decisions = state.get("decisions", {})
+        abs_path = str(Path(file_path).resolve())
+        if abs_path in decisions:
+            del decisions[abs_path]
+            state["decisions"] = decisions
+            save_state(state)
+
     # ── File-transition detection (progressive preview) ────────────────
     # When review_scope=file and Claude moves to a different file, the
     # previous file is "done" — preview it immediately.

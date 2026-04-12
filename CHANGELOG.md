@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.5.1] - 2026-04-12
+
+### Fixed
+
+- pass new_file_contents to openDiff RPC; clear stale decisions on first capture
+
+---
+
+
 ## [0.5.0] - 2026-04-12
 
 ### Added

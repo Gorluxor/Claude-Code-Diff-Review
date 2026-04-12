@@ -228,6 +228,10 @@ def _ws_open_diff_in_ide(
 
         # ── openDiff call — block until user acts ─────────────────────────
         _dbg(f"WS: calling openDiff — old={old_file_path!r} new={new_file_path!r} tab={tab_name!r}")
+        try:
+            new_file_contents = Path(new_file_path).read_text(errors="replace")
+        except Exception:
+            new_file_contents = ""
         sock.settimeout(timeout)
         resp = rpc({
             "jsonrpc": "2.0",
@@ -237,6 +241,7 @@ def _ws_open_diff_in_ide(
                 "arguments": {
                     "old_file_path": old_file_path,
                     "new_file_path": new_file_path,
+                    "new_file_contents": new_file_contents,
                     "tab_name": tab_name,
                 },
             },
@@ -355,6 +360,10 @@ def open_diff_in_ide(
         ep = f"{base_url}{ep}"
 
     # Send the openDiff tool call
+    try:
+        new_file_contents = Path(new_file_path).read_text(errors="replace")
+    except Exception:
+        new_file_contents = ""
     rpc = {
         "jsonrpc": "2.0",
         "id": "cdr-1",
@@ -364,6 +373,7 @@ def open_diff_in_ide(
             "arguments": {
                 "old_file_path": old_file_path,
                 "new_file_path": new_file_path,
+                "new_file_contents": new_file_contents,
                 "tab_name": tab_name,
             },
         },
