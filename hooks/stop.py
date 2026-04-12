@@ -79,7 +79,7 @@ def main():
             review_scope = config.get("review_scope", "session")
             interactive_provider = config.get("interactive_provider", "claude-code")
             vscode_wait = config.get("vscode_wait", True)
-            shadow_update = config.get("shadow_update", "session")
+            shadow_update = config.get("shadow_update", "round")
         except Exception:
             pass
 

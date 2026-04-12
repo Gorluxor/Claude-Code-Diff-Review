@@ -817,6 +817,153 @@ def run_vscode_review(
 
 
 # ──────────────────────────────────────────────────────────────────────
+# VS Code blocking review (code --diff --wait)
+# ──────────────────────────────────────────────────────────────────────
+
+def _run_vscode_blocking_review(edited_files: dict, state: dict, re_engage: bool) -> None:
+    """
+    Review using `code --diff --wait` — blocks per file until the user
+    closes the tab, then compares content to detect accept/reject/modified.
+
+    Gives full decision detection and re-engagement without needing the
+    Claude Code MCP extension.
+    """
+    from lib.diff import open_vscode_diff_blocking
+
+    log_event("review", "VS Code blocking review started", files=len(edited_files))
+
+    sys.stderr.write(f"\n{BOLD}{MAGENTA}{'─' * 60}{RESET}\n")
+    sys.stderr.write(f"{BOLD}{MAGENTA}  ◆ claude-diff-review — VS Code (blocking){RESET}\n")
+    sys.stderr.write(
+        f"{DIM}  Edit the right pane, then close the tab to record your decision{RESET}\n"
+    )
+    sys.stderr.write(f"{BOLD}{MAGENTA}{'─' * 60}{RESET}\n\n")
+
+    decisions: dict = {}
+    previewed = set(state.get("previewed_files", []))
+    accepted_prev = {p for p, d in state.get("decisions", {}).items() if d == "accepted"}
+    cli_missing = False
+
+    for abs_path in sorted(edited_files):
+        if abs_path in previewed or abs_path in accepted_prev:
+            log_event("review", "File skipped", file=os.path.basename(abs_path),
+                      reason="previewed" if abs_path in previewed else "accepted_prev")
+            continue
+
+        real = Path(abs_path)
+        shadow = get_shadow_path(abs_path)
+        rel = format_path(abs_path)
+
+        if not real.exists() or abs_path in state.get("binary_files", []):
+            continue
+
+        try:
+            original_content = shadow.read_text(errors="replace") if shadow.exists() else ""
+            claude_content = real.read_text(errors="replace")
+        except Exception:
+            continue
+
+        if original_content == claude_content:
+            log_event("review", "File unchanged — skipped", file=os.path.basename(abs_path))
+            sys.stderr.write(f"  {DIM}–  {rel} (unchanged){RESET}\n")
+            continue
+
+        log_event("review", "VS Code blocking diff opened", file=os.path.basename(abs_path))
+        sys.stderr.write(f"  {CYAN}▶{RESET}  {BOLD}{rel}{RESET}  {DIM}(waiting for tab close…){RESET}\n")
+        sys.stderr.flush()
+
+        result = open_vscode_diff_blocking(shadow, real, rel, claude_content)
+
+        if result is None:
+            # code CLI not found — fall back to terminal
+            if not cli_missing:
+                cli_missing = True
+                log_event("review", "VS Code CLI not found — falling back to terminal review")
+                sys.stderr.write(
+                    f"\n  {YELLOW}⚠  VS Code CLI not found.{RESET}\n"
+                    f"  {DIM}Falling back to terminal review…{RESET}\n\n"
+                )
+            _run_terminal_review(edited_files, state, re_engage)
+            return
+
+        log_event("review", "VS Code blocking diff closed", file=os.path.basename(abs_path),
+                  result=result)
+
+        if result == "rejected":
+            real.write_text(original_content)
+            decisions[abs_path] = {
+                "type": "rejected",
+                "original": original_content,
+                "claude": claude_content,
+                "final": original_content,
+            }
+            sys.stderr.write(f"  {RED}✗{RESET}  {BOLD}{rel}{RESET}  {DIM}rejected (reverted){RESET}\n")
+
+        elif result == "modified":
+            try:
+                final_content = real.read_text(errors="replace")
+            except Exception:
+                final_content = claude_content
+            decisions[abs_path] = {
+                "type": "modified",
+                "original": original_content,
+                "claude": claude_content,
+                "final": final_content,
+            }
+            sys.stderr.write(
+                f"  {YELLOW}~{RESET}  {BOLD}{rel}{RESET}  {DIM}accepted with modifications{RESET}\n"
+            )
+
+        else:  # accepted
+            sys.stderr.write(f"  {GREEN}✓{RESET}  {BOLD}{rel}{RESET}  {DIM}accepted{RESET}\n")
+
+    _record_decisions(decisions, state)
+
+    rejected = sum(1 for d in decisions.values() if d["type"] == "rejected")
+    modified = sum(1 for d in decisions.values() if d["type"] == "modified")
+    accepted = len(edited_files) - len(decisions)
+    log_event("review", "VS Code blocking review complete",
+              accepted=accepted, rejected=rejected, modified=modified)
+
+    sys.stderr.write(f"\n{DIM}{'─' * 60}{RESET}\n")
+
+    if decisions and re_engage:
+        log_event("review", "Re-engaging Claude", files_with_changes=len(decisions))
+        sys.stderr.write(
+            f"  {YELLOW}{len(decisions)} file(s) had rejections/modifications "
+            f"— re-engaging Claude…{RESET}\n"
+        )
+        sys.stderr.write(f"{DIM}{'─' * 60}{RESET}\n\n")
+        print(json.dumps({"decision": "block", "reason": _build_rejection_message(decisions)}))
+    elif decisions:
+        sys.stderr.write(
+            f"  {YELLOW}{len(decisions)} file(s) had rejections/modifications.{RESET}\n"
+            f"  {DIM}Claude not notified — describe changes manually to re-engage.{RESET}\n"
+        )
+        sys.stderr.write(f"{DIM}{'─' * 60}{RESET}\n\n")
+    else:
+        sys.stderr.write(f"  {GREEN}All changes accepted.{RESET}\n")
+        sys.stderr.write(f"{DIM}{'─' * 60}{RESET}\n\n")
+
+    sys.exit(0)
+
+
+def run_vscode_review(
+    edited_files: dict, state: dict, re_engage: bool = True, wait: bool = True,
+) -> None:
+    """
+    Entry point for vscode review mode.
+
+    wait=True (default) — code --diff --wait, blocking, with decision detection
+    wait=False          — code --diff background, fire-and-forget
+    """
+    if wait:
+        _run_vscode_blocking_review(edited_files, state, re_engage)
+        # exits internally
+    # Non-blocking: handled inline in stop.py (existing path)
+
+
+# ──────────────────────────────────────────────────────────────────────
 # Entry point
 # ──────────────────────────────────────────────────────────────────────
 

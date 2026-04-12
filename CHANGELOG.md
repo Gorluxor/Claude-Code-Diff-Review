@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.8.0] - 2026-04-12
+
+### Added
+
+- merge remote changes + add shadow_update config setting
+- change shadow_update default to 'round'
+- add shadow_update config setting (session vs round)
+- vscode mode now blocks per-file and detects accept/reject/modified
+
+---
+
+
+## [0.7.0] - 2026-04-12
+
+### Added
+
+- vscode mode now blocks per-file and detects accept/reject/modified
+
+---
+
+
 ## [0.6.2] - 2026-04-12
 
 ### Fixed
