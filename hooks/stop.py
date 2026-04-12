@@ -43,7 +43,7 @@ from lib.diff import (
     format_path, count_diff_lines, print_terminal_diff,
     open_vscode_diff, print_summary_header,
 )
-from lib.review import run_interactive_review
+from lib.review import run_interactive_review, run_vscode_review
 
 # Re-export for backward compatibility with tests that import from stop
 from lib.review import _review_file_hunks, _run_copilot_review  # noqa: F401
@@ -70,12 +70,14 @@ def main():
     review_mode = "interactive"
     review_scope = "session"
     interactive_provider = "claude-code"
+    vscode_wait = True
     if config_path.exists():
         try:
             config = json.loads(config_path.read_text())
             review_mode = config.get("review_mode", "interactive")
             review_scope = config.get("review_scope", "session")
             interactive_provider = config.get("interactive_provider", "claude-code")
+            vscode_wait = config.get("vscode_wait", True)
         except Exception:
             pass
 
@@ -85,6 +87,7 @@ def main():
         review_mode=review_mode,
         scope=review_scope,
         provider=interactive_provider,
+        vscode_wait=vscode_wait,
         tracked_files=len(edited_files),
     )
 
@@ -111,14 +114,21 @@ def main():
 
     # ── Interactive mode ────────────────────────────────────────────
     if review_mode == "interactive":
-        # Clear per-round state for next cycle
         state["current_file"] = None
         save_state(state)
         log_event("stop", "Dispatching to interactive review", provider=interactive_provider)
         run_interactive_review(files_to_review, state, provider=interactive_provider)
         # always exits internally
 
-    # ── Non-interactive modes (vscode / terminal / summary) ─────────
+    # ── VS Code mode (blocking or fire-and-forget) ──────────────────
+    if review_mode == "vscode" and vscode_wait:
+        state["current_file"] = None
+        save_state(state)
+        log_event("stop", "Dispatching to VS Code blocking review")
+        run_vscode_review(files_to_review, state, re_engage=True, wait=True)
+        # always exits internally
+
+    # ── Non-interactive modes (vscode no-wait / terminal / summary) ─
     print_summary_header(files_to_review)
     vscode_available = True
     previewed = set(state.get("previewed_files", []))

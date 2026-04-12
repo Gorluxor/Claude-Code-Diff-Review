@@ -120,6 +120,7 @@ _DEFAULTS = {
     "interactive_provider": "claude-code",
     "review_scope":         "session",
     "auto_cleanup":         True,
+    "vscode_wait":          True,
 }
 
 

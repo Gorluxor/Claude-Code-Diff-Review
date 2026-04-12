@@ -258,12 +258,14 @@ def cmd_config(args):
             print(f"  {k} = {BOLD}{v}{RESET}")
         print()
         print(f"{DIM}  review_mode:  interactive | vscode | terminal | summary{RESET}")
-        print(f"{DIM}    interactive — VS Code diff, per-hunk accept/reject, re-engages Claude on rejection{RESET}")
+        print(f"{DIM}    interactive — VS Code MCP openDiff, per-hunk accept/reject, re-engages Claude{RESET}")
+        print(f"{DIM}    vscode      — code --diff, blocks per file, detects accept/reject/modified{RESET}")
         print(f"{DIM}  interactive_provider: claude-code | copilot{RESET}")
         print(f"{DIM}    claude-code  — Claude Code MCP openDiff (blocking, one file at a time){RESET}")
         print(f"{DIM}    copilot      — stage in git + Copilot 'Review Changes' panel (non-blocking){RESET}")
         print(f"{DIM}  review_scope: session (all diffs at Stop) | "
               f"file (progressive, per-file as Claude works){RESET}")
+        print(f"{DIM}  vscode_wait:  true (block per file, detect decisions) | false (fire-and-forget){RESET}")
         print(f"{DIM}  auto_cleanup: true | false{RESET}")
         print(f"\n  {DIM}Use --wizard to re-run the interactive setup.{RESET}\n")
 
