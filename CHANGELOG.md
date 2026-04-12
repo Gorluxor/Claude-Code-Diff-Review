@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.8.1] - 2026-04-12
+
+### Fixed
+
+- write vscode_wait to config in first-run setup wizard
+
+### Changed
+
+- docs: update README for current feature set
+
+---
+
+
 ## [0.8.0] - 2026-04-12
 
 ### Added

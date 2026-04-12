@@ -111,6 +111,7 @@ def _run_setup_wizard() -> None:
             "interactive_provider": provider,
             "review_scope":         scope,
             "shadow_update":        shadow_update,
+            "vscode_wait":          True,
             "auto_cleanup":         True,
         }
         CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
