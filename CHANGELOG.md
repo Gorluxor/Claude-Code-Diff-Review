@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.8.5] - 2026-04-12
+
+### Fixed
+
+- remove duplicate _run_vscode_blocking_review without shadow_update
+
+---
+
+
 ## [0.8.4] - 2026-04-12
 
 ### Fixed
