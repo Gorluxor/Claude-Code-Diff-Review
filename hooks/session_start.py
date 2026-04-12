@@ -165,17 +165,17 @@ def main():
     except Exception:
         pass
 
-    # Initialize session state
+    # Always reinitialize state — SessionStart fires once per conversation,
+    # so prior decisions/edits from a previous session must not carry over.
     state = load_state()
-    if state.get("session_start") is None:
-        state["session_start"] = time.time()
-        state["edited_files"] = {}
-        state["shadow_created"] = []
-        state["previewed_files"] = []
-        state["current_file"] = None
-        state["decisions"] = {}
-        state["review_round"] = 0
-        save_state(state)
+    state["session_start"] = time.time()
+    state["edited_files"] = {}
+    state["shadow_created"] = []
+    state["previewed_files"] = []
+    state["current_file"] = None
+    state["decisions"] = {}
+    state["review_round"] = 0
+    save_state(state)
 
     # Verify the shadow directory is readable and writable
     perm_ok, perm_err = check_shadow_dir_permissions()
