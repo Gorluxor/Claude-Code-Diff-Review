@@ -7,6 +7,8 @@
 
 **Review Claude Code edits with per-hunk accept/reject instead of approving them one-by-one.**
 
+> **v0.8.1 — first stable release.** Core review flow (interactive VS Code diff, terminal fallback, multi-round re-engagement, shadow baseline modes) is considered stable. See [Known Issues](#known-issues) for current limitations.
+
 Claude Code's default flow interrupts you for every file edit. `claude-diff-review` flips the model: auto-approve edits, capture originals in the background, then open a native VS Code diff per file when Claude finishes. Accept what you like, reject individual hunks, restore what you don't — and if you reject anything, Claude is automatically re-engaged with the details.
 
 ---
@@ -64,6 +66,20 @@ You ask Claude to refactor something
 - **Session isolation** — concurrent Claude sessions don't interfere
 - **Binary-safe** — binary files tracked but skipped from diffing
 - **Global pause/resume** — `claude-diff pause` / `claude-diff resume` to bypass all hooks temporarily
+
+---
+
+## Checking the plugin logs
+
+Every hook and review decision is written to an append-only event log for the current session:
+
+```bash
+claude-diff log           # show last 50 events (color-coded by hook)
+claude-diff log -n 100    # show more
+claude-diff log -f        # follow in real time while Claude is running
+```
+
+If something looks wrong — a diff didn't open, a decision wasn't recorded, a fallback fired unexpectedly — start here. The log shows exactly what each hook saw and decided.
 
 ---
 
@@ -332,6 +348,26 @@ claude-diff accept         # or accept the current session
 ```
 
 Sessions auto-clean after 24 hours.
+
+---
+
+## Known Issues
+
+### Claude Code frontend records "accept" but the diff tab does not close
+
+In some versions of the Claude Code VS Code extension, clicking the Accept button in the diff editor is registered internally but the tab stays open. The plugin correctly receives the `FILE_SAVED` event and records the decision — the visual hang is a frontend rendering issue in the extension, not in the plugin. **Workaround:** close the tab manually after accepting; the decision has already been recorded.
+
+### `claude-diff restore` does not reload the file in the editor
+
+Restoring a file reverts the content on disk correctly, but the VS Code buffer still shows the old version. **Workaround:** after `claude-diff restore`, run `Revert File` in VS Code (`Ctrl+Shift+P` → "Revert File") to reload from disk.
+
+### `review_scope=file` can open diffs early when Claude interleaves edits
+
+The heuristic detects file switches by comparing the incoming tool path against the last active file. If Claude edits file A, then B, then A again, the diff for A may open before Claude is finished with it. **Workaround:** use `review_scope=session` (default) for multi-file sessions where Claude frequently revisits files.
+
+### Copilot provider is non-blocking
+
+When `interactive_provider=copilot`, the Stop hook exits immediately after staging files in git. There is no mechanism to detect whether the user accepted or rejected changes, so Claude cannot be automatically re-engaged with rejection context.
 
 ---
 
