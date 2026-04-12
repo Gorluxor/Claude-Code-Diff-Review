@@ -5,9 +5,9 @@
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-hooks-8B5CF6.svg)](https://claude.ai/code)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/Gorluxor/Claude-Code-Diff-Review)
 
-**Review Claude Code edits as consolidated diffs instead of approving them one-by-one.**
+**Review Claude Code edits with per-hunk accept/reject instead of approving them one-by-one.**
 
-Claude Code's default flow interrupts you for every file edit. `claude-diff-review` flips the model: auto-approve edits, capture originals in the background, then show you a clean diff per file in VS Code when Claude finishes. Accept what you like, restore what you don't.
+Claude Code's default flow interrupts you for every file edit. `claude-diff-review` flips the model: auto-approve edits, capture originals in the background, then open a native VS Code diff per file when Claude finishes. Accept what you like, reject individual hunks, restore what you don't — and if you reject anything, Claude is automatically re-engaged with the details.
 
 ---
 
@@ -27,20 +27,25 @@ You ask Claude to refactor something
          │
 ┌─ PostToolUse hook ─────────────────┐
 │  Tracks: which files, edit count   │
+│  Clears stale decisions on re-edit │
 └────────────────────────────────────┘
          │
          ▼  (Claude finishes responding)
          │
-┌─ Stop hook ────────────────────────┐
-│  For each edited file:             │
-│    Opens VS Code diff view         │
-│  Prints summary with +/- stats     │
+┌─ Stop hook → lib/review.py ────────┐
+│  interactive (default):            │
+│    VS Code native diff per file    │
+│    Per-hunk accept / reject        │
+│    Rejections re-engage Claude     │
+│  vscode: code --diff --wait        │
+│  terminal: colored per-hunk y/n    │
+│  summary: +/- counts only          │
 └────────────────────────────────────┘
          │
          ▼
-  You review in VS Code's diff view
-  Then: claude-diff accept
-    or: claude-diff restore
+  All accepted → session ends
+  Any rejected → Claude gets context
+                 and iterates
 ```
 
 ---
@@ -48,12 +53,17 @@ You ask Claude to refactor something
 ## Features
 
 - **Zero interruptions** — edits auto-approved while originals are preserved
-- **Consolidated review** — one clean diff per file instead of piecemeal approvals
+- **Native VS Code diff** — per-hunk accept/reject in VS Code's built-in diff editor (requires Claude Code extension)
+- **Terminal fallback** — `git add -p`-style per-hunk y/n review when VS Code isn't connected
+- **Automatic re-engagement** — rejections and user modifications are summarised and sent back to Claude
+- **Multi-round review** — previously accepted files are excluded from subsequent rounds
+- **Shadow baseline modes** — `round` (diff shows only new changes since last review) or `session` (diff shows all session changes)
+- **Full event log** — every hook and review decision is logged; `claude-diff log` for real-time debugging
 - **Two review scopes** — batch all diffs at end (`session`) or open progressively as Claude works (`file`)
-- **Three diff modes** — VS Code side-by-side, colored terminal output, or summary only
-- **Per-file restore** — reject one file without affecting others
+- **Fast-save guard** — stray Ctrl+S within 2s of diff opening automatically reopens the diff
 - **Session isolation** — concurrent Claude sessions don't interfere
-- **Binary-safe** — binary files are tracked but skipped from diffing
+- **Binary-safe** — binary files tracked but skipped from diffing
+- **Global pause/resume** — `claude-diff pause` / `claude-diff resume` to bypass all hooks temporarily
 
 ---
 
@@ -113,25 +123,28 @@ Just use Claude Code normally. When it edits files, you'll see:
 [diff-review] Tracked edit #2 to app.py
 ```
 
-When Claude finishes its response:
+When Claude finishes, the Stop hook fires. In the default **interactive** mode with the Claude Code VS Code extension connected:
 
 ```
 ────────────────────────────────────────────────────────────
-  ◆ claude-diff-review
-  3 files changed, 7 edits total
+  ◆ claude-diff-review — interactive (VS Code)
+  Connected to VS Code on port 46132
 ────────────────────────────────────────────────────────────
 
-  src/app.py        +24 -8   (3 edits)
-  src/utils.py      +12 -3   (2 edits)
-  tests/test_app.py +45 -0   (2 edits)
+  Left = original · Right = Claude's version
+  → Ctrl+S to accept  → Revert arrows to reject individual hunks
+
+  ▶  src/app.py        (opening diff…)
+  ✓  src/app.py        accepted
+  ▶  tests/test_app.py (opening diff…)
+  ~  tests/test_app.py accepted with modifications
 
 ────────────────────────────────────────────────────────────
-  Diffs opened in VS Code.
-  To reject all changes:  claude-diff restore
-  To accept and clean up: claude-diff accept
-  To reject one file:     claude-diff restore <path>
+  1 file had modifications — re-engaging Claude…
 ────────────────────────────────────────────────────────────
 ```
+
+Claude then receives a structured summary of what was rejected or modified and can iterate.
 
 ---
 
@@ -146,8 +159,12 @@ When Claude finishes its response:
 | `claude-diff diff` | Re-open all diffs in VS Code |
 | `claude-diff diff src/app.py` | Open diff for one file |
 | `claude-diff diff --mode terminal` | Print diffs to terminal instead |
+| `claude-diff log` | Show session event log |
+| `claude-diff log -f` | Follow log in real time |
 | `claude-diff config` | Show current configuration |
 | `claude-diff config <key> <value>` | Set a config value |
+| `claude-diff pause` | Suspend all hooks until resumed |
+| `claude-diff resume` | Re-enable hooks |
 | `claude-diff cleanup` | Remove all session data |
 | `claude-diff install` | Install/reinstall hooks |
 | `claude-diff uninstall` | Remove hooks from Claude Code |
@@ -156,96 +173,128 @@ When Claude finishes its response:
 
 ## Configuration
 
-Config lives at `~/.claude-diff-review/config.json`:
+Config lives at `~/.claude-diff-review/config.json`. A setup wizard runs on first use to configure the key options.
 
 ```json
 {
-  "review_mode": "vscode",
-  "auto_cleanup": true,
-  "review_scope": "session"
+  "review_mode": "interactive",
+  "interactive_provider": "claude-code",
+  "review_scope": "session",
+  "shadow_update": "round",
+  "vscode_wait": true,
+  "auto_cleanup": true
 }
 ```
 
 | Key | Values | Default | Description |
 |-----|--------|---------|-------------|
-| `review_mode` | `vscode` \| `terminal` \| `summary` | `vscode` | How diffs are displayed |
-| `review_scope` | `session` \| `file` | `session` | When diffs are opened |
-| `auto_cleanup` | `true` \| `false` | `true` | Remove shadow copies after `accept` |
-
-### `review_scope` in detail
-
-**`session`** (default) — All diffs open together when Claude finishes its full response. Best for large refactors where you want to see everything at once.
-
-**`file`** — As Claude moves from one file to the next, the diff for the completed file opens in VS Code immediately. You can review file A while Claude is still working on files B and C. Any remaining unreviewed files open at Stop as usual.
-
-```bash
-# Switch to per-file progressive review
-claude-diff config review_scope file
-
-# Switch back to batch review at end of turn
-claude-diff config review_scope session
-```
+| `review_mode` | `interactive` \| `vscode` \| `terminal` \| `summary` | `interactive` | How diffs are presented |
+| `interactive_provider` | `claude-code` \| `copilot` | `claude-code` | Backend for interactive mode |
+| `review_scope` | `session` \| `file` | `session` | When diffs open |
+| `shadow_update` | `session` \| `round` | `round` | What the diff baseline is |
+| `vscode_wait` | `true` \| `false` | `true` | Whether `vscode` mode blocks per file |
+| `auto_cleanup` | `true` \| `false` | `true` | Remove shadows after `accept` |
 
 ### `review_mode` in detail
 
-**`vscode`** (default) — Opens `code --diff` for each file. Falls back to terminal if `code` is not in PATH.
+**`interactive`** (default) — Connects to the Claude Code VS Code extension via MCP. Opens VS Code's native side-by-side diff editor per file. Use Ctrl+S to accept, the revert arrows to reject individual hunks. Blocks until you close each tab, then re-engages Claude with any rejections.
 
-**`terminal`** — Prints colored unified diffs inline. Useful in SSH sessions or when VS Code is not available.
+Falls back to terminal per-hunk review (`git add -p` style) if no VS Code IDE connection is found.
 
-**`summary`** — Only prints file names and +/- counts. No diff content.
+**`vscode`** — Opens `code --diff --wait` per file. Blocks until you close the tab; detects accept/reject/modified by comparing content. Re-engages Claude on rejections. Falls back to terminal if `code` is not in PATH. Set `vscode_wait: false` for the old non-blocking fire-and-forget behavior.
+
+**`terminal`** — Colored unified diff printed to stderr, then per-hunk y/n prompts in the terminal.
+
+**`summary`** — File list with +/- counts only, no diff content.
 
 ```bash
 claude-diff config review_mode terminal
 # or per-invocation:
-CLAUDE_DIFF_MODE=terminal claude-diff diff
+CLAUDE_DIFF_MODE=terminal claude
 ```
+
+### `shadow_update` in detail
+
+**`round`** (default) — After each accepted or modified review, the shadow baseline advances to the accepted file. The next diff shows only what changed since that review.
+
+**`session`** — Shadow is captured once at session start and never updated. Every diff shows the full set of changes Claude made this conversation. Good for auditing.
+
+```bash
+claude-diff config shadow_update session   # cumulative diffs
+claude-diff config shadow_update round     # incremental diffs (default)
+```
+
+### `review_scope` in detail
+
+**`session`** (default) — All diffs open together when Claude finishes its full response.
+
+**`file`** — As Claude moves from one file to the next, the diff for the completed file opens immediately. Remaining files open at Stop as usual.
+
+```bash
+claude-diff config review_scope file
+```
+
+### `interactive_provider` in detail
+
+**`claude-code`** (default) — Uses the Claude Code VS Code extension's MCP `openDiff` tool. Blocking, per-file, with full decision detection and re-engagement.
+
+**`copilot`** — Stages all edited files in git so VS Code's Source Control panel (and Copilot's "Review Changes") picks them up. Non-blocking — Claude cannot be re-engaged automatically.
 
 ---
 
 ## Architecture
 
 ```
-~/.claude-diff-review/
-├── app/                          # Installed application
-│   ├── hooks/
-│   │   ├── session_start.py      # SessionStart: init state
-│   │   ├── pre_tool_use.py       # PreToolUse: capture originals, file-scope preview
-│   │   ├── post_tool_use.py      # PostToolUse: track edits
-│   │   └── stop.py               # Stop: show remaining diffs, print summary
-│   ├── lib/
-│   │   ├── __init__.py
-│   │   └── state.py              # Shared state management
-│   └── bin/
-│       └── claude-diff           # CLI entry point
-├── config.json                   # User configuration
-└── sessions/                     # Per-session state (keyed by CLAUDE_SESSION_ID)
-    └── <session-id>/
-        ├── state.json            # Edit tracking
-        └── shadow/               # Original file copies
+hooks/
+  session_start.py   # SessionStart: init state, first-run wizard, cleanup old sessions
+  pre_tool_use.py    # PreToolUse: capture originals; file-scope progressive preview
+  post_tool_use.py   # PostToolUse: track edit counts; clear stale decisions on re-edit
+  stop.py            # Stop: slim dispatcher → lib/review
+lib/
+  state.py           # Session dirs, shadow ops, state r/w, event logging
+  diff.py            # ANSI colors, diff stats, terminal diff, VS Code diff helpers
+  review.py          # IDE review, terminal per-hunk, VS Code blocking, Copilot, re-engagement
+  ide.py             # MCP client: SSE + WebSocket openDiff RPC to VS Code
+bin/
+  claude-diff        # CLI: status, accept, diff, log, config, install, pause/resume, …
+tests/
+  test_e2e.py        # 23 end-to-end lifecycle tests (no external deps)
+```
+
+Session state: `~/.claude-diff-review/sessions/<CLAUDE_SESSION_ID>/`
+
+```
+sessions/<id>/
+  state.json     # edit tracking, decisions, round number
+  events.log     # append-only hook event log
+  shadow/        # original file copies (pre-session baseline)
 ```
 
 ### Hook events
 
 | Hook | Matcher | What it does |
 |------|---------|--------------|
-| `SessionStart` | — | Initializes state, cleans sessions older than 24h |
-| `PreToolUse` | `Edit\|Write\|MultiEdit` | Copies original to shadow; in `file` scope, opens diffs for completed files |
-| `PostToolUse` | `Edit\|Write\|MultiEdit` | Increments per-file edit counter |
-| `Stop` | — | Opens VS Code diffs, prints summary |
+| `SessionStart` | — | Initializes state, runs first-run wizard, cleans sessions older than 24h |
+| `PreToolUse` | `Edit\|Write\|MultiEdit` | Captures original to shadow; in `file` scope, opens diffs for completed files |
+| `PostToolUse` | `Edit\|Write\|MultiEdit` | Increments per-file edit counter; clears stale accepted decision on re-edit |
+| `Stop` | — | Dispatches to review mode; handles re-engagement on rejection |
 
 ### Why edits land in the real file
 
-We considered redirecting edits to temp files, but Claude needs to read back its own changes. If Claude edits line 10 then reads the file to verify, it must see the edit. So edits apply normally; the pre-edit copy is kept in `shadow/` for diffing.
-
-### Session isolation
-
-Each Claude Code session gets its own state directory keyed by `CLAUDE_SESSION_ID`. Concurrent sessions never interfere.
+We considered redirecting edits to temp files, but Claude needs to read back its own changes mid-session. So edits apply normally; the pre-edit copy is kept in `shadow/` for diffing.
 
 ---
 
 ## Troubleshooting
 
-### VS Code diffs not opening
+### Interactive mode: diffs not opening
+
+- Verify the Claude Code VS Code extension is installed and the workspace is open
+- Check the event log for connection details: `claude-diff log`
+- The plugin tries SSE then WebSocket transport; look for `Found lock:` entries to confirm detection
+- Fallback: `claude-diff config review_mode vscode` (uses `code --diff` instead of MCP)
+
+### VS Code diffs not opening (`vscode` mode)
 
 - Verify `code` is in your PATH: `which code`
 - macOS: open VS Code → `Cmd+Shift+P` → "Install 'code' command in PATH"
@@ -265,11 +314,21 @@ The installer adds `Edit`, `Write`, `MultiEdit` to `permissions.allow`. If promp
 2. Try `Shift+Tab` in Claude Code to cycle to "auto-accept edits" mode
 3. Verify: `cat ~/.claude/settings.json | grep -A5 permissions`
 
+### Debugging with the event log
+
+```bash
+claude-diff log           # show last 50 events
+claude-diff log -n 100    # show last 100 events
+claude-diff log -f        # follow in real time (like tail -f)
+```
+
+Events are color-coded by hook type and show timing, file names, and decision outcomes.
+
 ### Shadow copies taking too much space
 
 ```bash
 claude-diff cleanup        # remove all sessions
-claude-diff accept         # or just accept the current session
+claude-diff accept         # or accept the current session
 ```
 
 Sessions auto-clean after 24 hours.
@@ -292,7 +351,7 @@ rm -f ~/.local/bin/claude-diff
 python3 tests/test_e2e.py
 ```
 
-The test simulates the full hook lifecycle (SessionStart → PreToolUse → edit → PostToolUse × N → Stop) against a temporary directory, verifying shadow capture, diff output, and restore.
+Simulates the full hook lifecycle (SessionStart → PreToolUse → edit → PostToolUse × N → Stop) against a temporary directory. 23 tests, no external dependencies.
 
 ---
 
