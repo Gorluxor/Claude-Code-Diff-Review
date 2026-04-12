@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.7.0] - 2026-04-12
+
+### Added
+
+- vscode mode now blocks per-file and detects accept/reject/modified
+
+---
+
+
 ## [0.6.2] - 2026-04-12
 
 ### Fixed

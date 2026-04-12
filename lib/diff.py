@@ -104,7 +104,7 @@ def print_terminal_diff(shadow_path: Path, real_path: Path, rel_name: str):
 # ──────────────────────────────────────────────────────────────────────
 
 def open_vscode_diff(shadow_path: Path, real_path: Path, rel_name: str) -> bool:
-    """Open code --diff in the background. Returns True on success."""
+    """Open code --diff in the background (non-blocking). Returns True on success."""
     for cmd in ("code", "code-insiders"):
         try:
             subprocess.Popen(
@@ -117,6 +117,47 @@ def open_vscode_diff(shadow_path: Path, real_path: Path, rel_name: str) -> bool:
         except FileNotFoundError:
             continue
     return False
+
+
+def open_vscode_diff_blocking(
+    shadow_path: Path,
+    real_path: Path,
+    rel_name: str,
+    claude_content: str,
+) -> str | None:
+    """
+    Open code --diff --wait and block until the user closes the tab.
+
+    After the tab closes, compares the final file content against the
+    original (shadow) and Claude's version to determine the decision.
+
+    Returns: "accepted" | "rejected" | "modified" | None (code CLI not found)
+    """
+    for cmd in ("code", "code-insiders"):
+        try:
+            subprocess.run(
+                [cmd, "--diff", str(shadow_path), str(real_path),
+                 "--wait", "--title", f"Review: {rel_name}"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except FileNotFoundError:
+            continue
+
+        try:
+            final = real_path.read_text(errors="replace")
+            original = shadow_path.read_text(errors="replace") if shadow_path.exists() else ""
+        except Exception:
+            return "accepted"
+
+        if final.rstrip() == original.rstrip():
+            return "rejected"
+        elif final != claude_content:
+            return "modified"
+        else:
+            return "accepted"
+
+    return None  # code CLI not found
 
 
 # ──────────────────────────────────────────────────────────────────────

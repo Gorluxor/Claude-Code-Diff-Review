@@ -1,7 +1,7 @@
 {
   "name": "claude-diff-review",
   "description": "Review Claude Code edits as consolidated VS Code diffs instead of approving them one-by-one. Auto-approves edits, captures originals in shadow storage, then opens clean per-file diffs when Claude finishes.",
-  "version": "0.6.2",
+  "version": "0.7.0",
   "author": {
     "name": "Aleksandar Cvejic"
   },
