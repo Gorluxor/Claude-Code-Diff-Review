@@ -103,7 +103,8 @@ _MAX_FAST_RETRIES = 2  # reopen at most this many extra times per file
 # ──────────────────────────────────────────────────────────────────────
 
 def _run_ide_review(
-    edited_files: dict, state: dict, ide_server: dict, re_engage: bool
+    edited_files: dict, state: dict, ide_server: dict, re_engage: bool,
+    shadow_update: str = "session",
 ) -> None:
     """
     Review via Claude Code's native VS Code openDiff MCP RPC.
@@ -280,17 +281,20 @@ def _run_ide_review(
             f"  {DIM}Falling back to terminal review…{RESET}\n"
         )
         sys.stderr.write(f"{DIM}{'─' * 60}{RESET}\n\n")
-        _run_terminal_review(edited_files, state, re_engage)
+        _run_terminal_review(edited_files, state, re_engage, shadow_update)
         return  # _run_terminal_review calls sys.exit(0)
 
     # Record decisions in state
     _record_decisions(decisions, state)
+    if shadow_update == "round":
+        _update_shadows_for_round(state)
 
     rejected = sum(1 for d in decisions.values() if d["type"] == "rejected")
     modified = sum(1 for d in decisions.values() if d["type"] == "modified")
     accepted = rpc_responded_count - len(decisions)
     log_event("review", "IDE review complete",
-              accepted=accepted, rejected=rejected, modified=modified)
+              accepted=accepted, rejected=rejected, modified=modified,
+              shadow_update=shadow_update)
 
     sys.stderr.write(f"\n{DIM}{'─' * 60}{RESET}\n")
 
@@ -457,7 +461,8 @@ def _review_file_hunks(abs_path: str, tty) -> dict:
     }
 
 
-def _run_terminal_review(edited_files: dict, state: dict, re_engage: bool) -> None:
+def _run_terminal_review(edited_files: dict, state: dict, re_engage: bool,
+                         shadow_update: str = "session") -> None:
     """Terminal per-hunk review fallback when no VS Code IDE is connected."""
     log_event("review", "Terminal review started", files=len(edited_files))
     sys.stderr.write(f"\n{BOLD}{MAGENTA}{'─' * 60}{RESET}\n")
@@ -527,9 +532,11 @@ def _run_terminal_review(edited_files: dict, state: dict, re_engage: bool) -> No
         else:
             decisions[abs_path] = "accepted"
     _record_decisions_simple(decisions, state)
+    if shadow_update == "round":
+        _update_shadows_for_round(state)
     log_event("review", "Terminal review complete",
               total_accepted=total_accepted, total_rejected=total_rejected,
-              files_rejected=len(all_rejections))
+              files_rejected=len(all_rejections), shadow_update=shadow_update)
 
     if all_rejections and re_engage:
         decisions_detail = {}
@@ -634,11 +641,35 @@ def _record_decisions_simple(decisions: dict, state: dict) -> None:
     save_state(state)
 
 
+def _update_shadows_for_round(state: dict) -> None:
+    """
+    Copy each accepted/modified file over its shadow so the next diff
+    shows only new changes (shadow_update='round' mode).
+
+    Rejected files are already reverted to original — shadow is already correct.
+    """
+    import shutil
+    decisions = state.get("decisions", {})
+    for abs_path, decision in decisions.items():
+        if decision in ("accepted", "modified"):
+            real = Path(abs_path)
+            shadow = get_shadow_path(abs_path)
+            if real.exists():
+                try:
+                    shutil.copy2(str(real), str(shadow))
+                    log_event("review", "Shadow updated for round",
+                              file=os.path.basename(abs_path))
+                except Exception as e:
+                    log_event("review", "Shadow update failed",
+                              file=os.path.basename(abs_path), error=str(e))
+
+
 # ──────────────────────────────────────────────────────────────────────
 # VS Code blocking review (code --diff --wait)
 # ──────────────────────────────────────────────────────────────────────
 
-def _run_vscode_blocking_review(edited_files: dict, state: dict, re_engage: bool) -> None:
+def _run_vscode_blocking_review(edited_files: dict, state: dict, re_engage: bool,
+                                shadow_update: str = "session") -> None:
     """
     Review using `code --diff --wait` — blocks per file until the user
     closes the tab, then compares content to detect accept/reject/modified.
@@ -701,7 +732,7 @@ def _run_vscode_blocking_review(edited_files: dict, state: dict, re_engage: bool
                     f"\n  {YELLOW}⚠  VS Code CLI not found.{RESET}\n"
                     f"  {DIM}Falling back to terminal review…{RESET}\n\n"
                 )
-            _run_terminal_review(edited_files, state, re_engage)
+            _run_terminal_review(edited_files, state, re_engage, shadow_update)
             return
 
         log_event("review", "VS Code blocking diff closed", file=os.path.basename(abs_path),
@@ -736,12 +767,15 @@ def _run_vscode_blocking_review(edited_files: dict, state: dict, re_engage: bool
             sys.stderr.write(f"  {GREEN}✓{RESET}  {BOLD}{rel}{RESET}  {DIM}accepted{RESET}\n")
 
     _record_decisions(decisions, state)
+    if shadow_update == "round":
+        _update_shadows_for_round(state)
 
     rejected = sum(1 for d in decisions.values() if d["type"] == "rejected")
     modified = sum(1 for d in decisions.values() if d["type"] == "modified")
     accepted = len(edited_files) - len(decisions)
     log_event("review", "VS Code blocking review complete",
-              accepted=accepted, rejected=rejected, modified=modified)
+              accepted=accepted, rejected=rejected, modified=modified,
+              shadow_update=shadow_update)
 
     sys.stderr.write(f"\n{DIM}{'─' * 60}{RESET}\n")
 
@@ -768,6 +802,7 @@ def _run_vscode_blocking_review(edited_files: dict, state: dict, re_engage: bool
 
 def run_vscode_review(
     edited_files: dict, state: dict, re_engage: bool = True, wait: bool = True,
+    shadow_update: str = "session",
 ) -> None:
     """
     Entry point for vscode review mode.
@@ -776,7 +811,7 @@ def run_vscode_review(
     wait=False          — code --diff background, fire-and-forget
     """
     if wait:
-        _run_vscode_blocking_review(edited_files, state, re_engage)
+        _run_vscode_blocking_review(edited_files, state, re_engage, shadow_update)
         # exits internally
     # Non-blocking: handled inline in stop.py (existing path)
 
@@ -787,7 +822,7 @@ def run_vscode_review(
 
 def run_interactive_review(
     edited_files: dict, state: dict, provider: str = "claude-code",
-    re_engage: bool = True,
+    re_engage: bool = True, shadow_update: str = "session",
 ) -> None:
     """
     Entry point for interactive review.
@@ -802,6 +837,6 @@ def run_interactive_review(
     from lib.ide import find_ide_server
     ide_server = find_ide_server()
     if ide_server:
-        _run_ide_review(edited_files, state, ide_server, re_engage)
+        _run_ide_review(edited_files, state, ide_server, re_engage, shadow_update)
     else:
-        _run_terminal_review(edited_files, state, re_engage)
+        _run_terminal_review(edited_files, state, re_engage, shadow_update)

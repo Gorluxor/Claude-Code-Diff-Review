@@ -41,9 +41,10 @@ RESET = "\033[0m"
 
 CONFIG_PATH = Path.home() / ".claude-diff-review" / "config.json"
 
-_REVIEW_MODES     = ["interactive", "vscode", "terminal", "summary"]
-_REVIEW_SCOPES    = ["session", "file"]
+_REVIEW_MODES    = ["interactive", "vscode", "terminal", "summary"]
+_REVIEW_SCOPES   = ["session", "file"]
 _REVIEW_PROVIDERS = ["claude-code", "copilot"]
+_SHADOW_UPDATES  = ["session", "round"]
 
 
 def _ask(tty, prompt: str, choices: list, default: str) -> str:
@@ -98,10 +99,18 @@ def _run_setup_wizard() -> None:
 
         scope = _ask(tty, "Review scope", _REVIEW_SCOPES, "session")
 
+        tty.write(
+            f"\n  {DIM}session{RESET}  Diff always shows all changes since the start of the session\n"
+            f"  {DIM}round{RESET}    Diff shows only changes since the last accepted review\n\n"
+        )
+
+        shadow_update = _ask(tty, "Shadow baseline", _SHADOW_UPDATES, "session")
+
         config = {
             "review_mode":          mode,
             "interactive_provider": provider,
             "review_scope":         scope,
+            "shadow_update":        shadow_update,
             "auto_cleanup":         True,
         }
         CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -121,6 +130,7 @@ _DEFAULTS = {
     "review_scope":         "session",
     "auto_cleanup":         True,
     "vscode_wait":          True,
+    "shadow_update":        "session",
 }
 
 

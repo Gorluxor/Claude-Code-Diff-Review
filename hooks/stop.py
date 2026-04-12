@@ -71,6 +71,7 @@ def main():
     review_scope = "session"
     interactive_provider = "claude-code"
     vscode_wait = True
+    shadow_update = "session"
     if config_path.exists():
         try:
             config = json.loads(config_path.read_text())
@@ -78,6 +79,7 @@ def main():
             review_scope = config.get("review_scope", "session")
             interactive_provider = config.get("interactive_provider", "claude-code")
             vscode_wait = config.get("vscode_wait", True)
+            shadow_update = config.get("shadow_update", "session")
         except Exception:
             pass
 
@@ -88,6 +90,7 @@ def main():
         scope=review_scope,
         provider=interactive_provider,
         vscode_wait=vscode_wait,
+        shadow_update=shadow_update,
         tracked_files=len(edited_files),
     )
 
@@ -117,7 +120,8 @@ def main():
         state["current_file"] = None
         save_state(state)
         log_event("stop", "Dispatching to interactive review", provider=interactive_provider)
-        run_interactive_review(files_to_review, state, provider=interactive_provider)
+        run_interactive_review(files_to_review, state, provider=interactive_provider,
+                               shadow_update=shadow_update)
         # always exits internally
 
     # ── VS Code mode (blocking or fire-and-forget) ──────────────────
@@ -125,7 +129,8 @@ def main():
         state["current_file"] = None
         save_state(state)
         log_event("stop", "Dispatching to VS Code blocking review")
-        run_vscode_review(files_to_review, state, re_engage=True, wait=True)
+        run_vscode_review(files_to_review, state, re_engage=True, wait=True,
+                          shadow_update=shadow_update)
         # always exits internally
 
     # ── Non-interactive modes (vscode no-wait / terminal / summary) ─
