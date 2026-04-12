@@ -948,21 +948,6 @@ def _run_vscode_blocking_review(edited_files: dict, state: dict, re_engage: bool
     sys.exit(0)
 
 
-def run_vscode_review(
-    edited_files: dict, state: dict, re_engage: bool = True, wait: bool = True,
-) -> None:
-    """
-    Entry point for vscode review mode.
-
-    wait=True (default) — code --diff --wait, blocking, with decision detection
-    wait=False          — code --diff background, fire-and-forget
-    """
-    if wait:
-        _run_vscode_blocking_review(edited_files, state, re_engage)
-        # exits internally
-    # Non-blocking: handled inline in stop.py (existing path)
-
-
 # ──────────────────────────────────────────────────────────────────────
 # Entry point
 # ──────────────────────────────────────────────────────────────────────
