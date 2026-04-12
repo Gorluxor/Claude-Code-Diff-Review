@@ -10,6 +10,7 @@ Commands:
   config            Show or edit configuration (--wizard to re-run setup)
   install           Install hooks into Claude Code settings
   uninstall         Remove hooks from Claude Code settings
+  migrate           Sync hooks/lib from newest cache version to all older ones
   pause             Pause diff tracking (hooks do nothing until resumed)
   resume            Resume diff tracking
 """
@@ -363,6 +364,65 @@ def cmd_log(args):
             pass
 
 
+def cmd_migrate(args):
+    """
+    Copy hooks/ and lib/ from the newest installed cache version to all
+    older cache versions so they all run the same code.
+
+    The plugin manager may keep multiple version directories cached;
+    Claude Code picks one at runtime. Running this after an upgrade
+    ensures every cached copy is in sync without needing a full reinstall.
+    """
+    cache_root = Path.home() / ".claude" / "plugins" / "cache" / "claude-diff-review" / "claude-diff-review"
+    if not cache_root.exists():
+        print(f"{YELLOW}⚠{RESET}  Plugin cache not found at {cache_root}")
+        print(f"  {DIM}Nothing to migrate.{RESET}")
+        return
+
+    versions = sorted(
+        [d for d in cache_root.iterdir() if d.is_dir()],
+        key=lambda d: [int(x) for x in d.name.split(".") if x.isdigit()],
+    )
+
+    if len(versions) < 2:
+        print(f"{DIM}Only one cached version found — nothing to migrate.{RESET}")
+        return
+
+    newest = versions[-1]
+    older  = versions[:-1]
+
+    print(f"\n{BOLD}{MAGENTA}◆ claude-diff-review — cache migration{RESET}\n")
+    print(f"  {DIM}Newest: {newest.name}{RESET}")
+    print(f"  {DIM}Syncing to: {', '.join(v.name for v in older)}{RESET}\n")
+
+    sync_dirs = ["hooks", "lib"]
+    copied = 0
+    errors = 0
+
+    for old_ver in older:
+        for d in sync_dirs:
+            src_dir = newest / d
+            dst_dir = old_ver / d
+            if not src_dir.exists():
+                continue
+            dst_dir.mkdir(parents=True, exist_ok=True)
+            for src_file in src_dir.iterdir():
+                if src_file.suffix == ".py":
+                    dst_file = dst_dir / src_file.name
+                    try:
+                        shutil.copy2(str(src_file), str(dst_file))
+                        copied += 1
+                    except Exception as e:
+                        print(f"  {RED}✗{RESET}  {old_ver.name}/{d}/{src_file.name}: {e}")
+                        errors += 1
+
+        print(f"  {GREEN}✓{RESET}  {old_ver.name} — synced")
+
+    print(f"\n  {DIM}{copied} file{'s' if copied != 1 else ''} copied"
+          f"{f', {errors} error(s)' if errors else ''}.{RESET}")
+    print(f"\n  {DIM}Run /reload-plugins in Claude Code to pick up the changes.{RESET}\n")
+
+
 def cmd_pause(args):
     """Globally pause diff tracking — hooks fire but do nothing."""
     config = load_config()
@@ -528,6 +588,7 @@ def main():
   claude-diff log -f           Follow log in real time
   claude-diff log -n 50        Show last 50 log lines
   claude-diff config --wizard  Re-run the interactive setup wizard
+  claude-diff migrate          Sync all cached versions after an upgrade
   claude-diff pause            Pause diff tracking
   claude-diff resume           Resume diff tracking
         """
@@ -563,6 +624,9 @@ def main():
     subs.add_parser("pause",  help="Pause diff tracking globally (hooks do nothing)")
     subs.add_parser("resume", help="Resume diff tracking")
 
+    # migrate
+    subs.add_parser("migrate", help="Sync hooks/lib from newest cache version to older ones")
+
     # install
     p_install = subs.add_parser("install", help="Install hooks into Claude Code")
     p_install.add_argument("--settings", help="Path to settings.json")
@@ -579,6 +643,7 @@ def main():
         "diff":      cmd_diff,
         "config":    cmd_config,
         "log":       cmd_log,
+        "migrate":   cmd_migrate,
         "pause":     cmd_pause,
         "resume":    cmd_resume,
         "install":   cmd_install,
