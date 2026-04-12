@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.2] - 2026-04-12
+
+### Fixed
+
+- clear accepted decision when a file is edited again after review
+
+---
+
+
 ## [0.6.1] - 2026-04-12
 
 ### Fixed

@@ -20,9 +20,11 @@ from lib.state import (
     extract_file_path,
     record_edit,
     load_state,
+    save_state,
     is_paused,
     log_event,
 )
+from pathlib import Path
 
 
 def main():
@@ -43,6 +45,20 @@ def main():
 
     basename = os.path.basename(file_path)
     log_event("post_tool_use", "Edit recorded", file=basename, count=count)
+
+    # If this file was previously accepted, clear that decision so the new
+    # edit re-enters the review queue at the next Stop hook.
+    abs_path = str(Path(file_path).resolve())
+    state = load_state()
+    decisions = state.get("decisions", {})
+    if decisions.get(abs_path) == "accepted":
+        del decisions[abs_path]
+        state["decisions"] = decisions
+        save_state(state)
+        log_event("post_tool_use", "Cleared accepted decision — re-queued for review",
+                  file=basename)
+        sys.stderr.write(f"[diff-review] Re-queued {basename} for review (new edit after accept)\n")
+
     sys.stderr.write(f"[diff-review] Tracked edit #{count} to {basename}\n")
     sys.exit(0)
 
