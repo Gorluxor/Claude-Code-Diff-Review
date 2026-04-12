@@ -10,6 +10,7 @@ import sys
 import os
 import subprocess
 import difflib
+import time
 from pathlib import Path
 
 from lib.state import (
@@ -91,6 +92,12 @@ def _build_rejection_message(decisions: dict) -> str:
     return "\n".join(lines)
 
 
+# If FILE_SAVED arrives faster than this, it's likely a stray Ctrl+S —
+# reopen the diff automatically so the user actually gets to review it.
+_MIN_REVIEW_SECS = 2.0
+_MAX_FAST_RETRIES = 2  # reopen at most this many extra times per file
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Interactive review — IDE path (native VS Code openDiff RPC)
 # ──────────────────────────────────────────────────────────────────────
@@ -168,13 +175,42 @@ def _run_ide_review(
         sys.stderr.write(f"  {CYAN}▶{RESET}  {BOLD}{rel}{RESET}  {DIM}(opening diff…){RESET}\n")
         sys.stderr.flush()
 
-        response = open_diff_in_ide(
-            ide_server, str(shadow), str(real),
-            f"Review: {rel}", timeout=600,
-        )
+        # Fast-save guard: if FILE_SAVED arrives in < _MIN_REVIEW_SECS it's
+        # likely a stray Ctrl+S carried over from the previous file.
+        # Reopen automatically up to _MAX_FAST_RETRIES times.
+        fast_retries = 0
+        while True:
+            t_start = time.time()
+            response = open_diff_in_ide(
+                ide_server, str(shadow), str(real),
+                f"Review: {rel}", timeout=600,
+            )
+            elapsed = time.time() - t_start
+
+            if (
+                response == "FILE_SAVED"
+                and elapsed < _MIN_REVIEW_SECS
+                and fast_retries < _MAX_FAST_RETRIES
+            ):
+                fast_retries += 1
+                log_event(
+                    "review", "Fast FILE_SAVED — possible stray Ctrl+S, reopening",
+                    file=os.path.basename(abs_path),
+                    elapsed_s=f"{elapsed:.1f}",
+                    retry=fast_retries,
+                )
+                sys.stderr.write(
+                    f"  {YELLOW}⚡{RESET}  {BOLD}{rel}{RESET}  "
+                    f"{DIM}saved in {elapsed:.1f}s — possible stray Ctrl+S, "
+                    f"reopening diff… (attempt {fast_retries}/{_MAX_FAST_RETRIES}){RESET}\n"
+                )
+                sys.stderr.flush()
+                continue
+            break
 
         log_event("review", "openDiff response", file=os.path.basename(abs_path),
-                  response=response if response is not None else "None(RPC_FAILED)")
+                  response=response if response is not None else "None(RPC_FAILED)",
+                  elapsed_s=f"{elapsed:.1f}")
 
         if response is None:
             rpc_none_count += 1

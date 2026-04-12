@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.1] - 2026-04-12
+
+### Fixed
+
+- reopen diff when FILE_SAVED arrives too fast (stray Ctrl+S guard)
+
+---
+
+
 ## [0.6.0] - 2026-04-12
 
 ### Added
