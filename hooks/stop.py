@@ -71,7 +71,7 @@ def main():
     review_scope = "session"
     interactive_provider = "claude-code"
     vscode_wait = True
-    shadow_update = "session"
+    shadow_update = "round"
     if config_path.exists():
         try:
             config = json.loads(config_path.read_text())

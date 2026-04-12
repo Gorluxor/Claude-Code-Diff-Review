@@ -61,7 +61,7 @@ User config lives at `~/.claude-diff-review/config.json`:
 | `review_mode` | `interactive` \| `vscode` \| `terminal` \| `summary` | `interactive` |
 | `review_scope` | `session` \| `file` | `session` |
 | `vscode_wait` | `true` \| `false` | `true` |
-| `shadow_update` | `session` \| `round` | `session` |
+| `shadow_update` | `session` \| `round` | `round` |
 | `auto_cleanup` | `true` \| `false` | `true` |
 
 ## Plugin Installation

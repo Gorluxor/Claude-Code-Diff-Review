@@ -104,7 +104,7 @@ def _run_setup_wizard() -> None:
             f"  {DIM}round{RESET}    Diff shows only changes since the last accepted review\n\n"
         )
 
-        shadow_update = _ask(tty, "Shadow baseline", _SHADOW_UPDATES, "session")
+        shadow_update = _ask(tty, "Shadow baseline", _SHADOW_UPDATES, "round")
 
         config = {
             "review_mode":          mode,
@@ -130,7 +130,7 @@ _DEFAULTS = {
     "review_scope":         "session",
     "auto_cleanup":         True,
     "vscode_wait":          True,
-    "shadow_update":        "session",
+    "shadow_update":        "round",
 }
 
 
