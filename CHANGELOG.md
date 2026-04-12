@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.0] - 2026-04-12
+
+### Added
+
+- add full event logging to all hooks and libs
+
+### Changed
+
+- docs: add interactive mode to config table in CLAUDE.md
+
+---
+
+
 ## [0.5.3] - 2026-04-12
 
 ### Fixed

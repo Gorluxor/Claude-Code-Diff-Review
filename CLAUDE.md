@@ -58,7 +58,7 @@ User config lives at `~/.claude-diff-review/config.json`:
 
 | Key | Values | Default |
 |-----|--------|---------|
-| `review_mode` | `vscode` \| `terminal` \| `summary` | `vscode` |
+| `review_mode` | `interactive` \| `vscode` \| `terminal` \| `summary` | `interactive` |
 | `review_scope` | `session` \| `file` | `session` |
 | `auto_cleanup` | `true` \| `false` | `true` |
 
