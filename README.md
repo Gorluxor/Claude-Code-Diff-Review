@@ -13,6 +13,18 @@ Claude Code's default flow interrupts you for every file edit. `claude-diff-revi
 
 ---
 
+## Before & After
+
+**Before** — Two edits tracked and ready for review:
+
+![Before: two edits captured, diff summary shown in terminal](media/two_edits.png)
+
+**After** — VS Code opens the diff; user reverts a hunk, Claude is re-engaged:
+
+![After: VS Code diff with hunk revert, re-engagement in action](media/two_edits_vscode_revert.png)
+
+---
+
 ## How it works
 
 ```
