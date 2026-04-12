@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.8.2] - 2026-04-12
+
+### Fixed
+
+- backfill missing config keys on every session start
+
+### Changed
+
+- docs: announce v0.8.1 stable, add known issues and log quickstart
+
+---
+
+
 ## [0.8.1] - 2026-04-12
 
 ### Fixed

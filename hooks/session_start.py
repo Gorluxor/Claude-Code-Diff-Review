@@ -137,23 +137,41 @@ _DEFAULTS = {
 
 def _ensure_config() -> None:
     """
-    Guarantee a config file always exists.
+    Guarantee a config file always exists and contains all known keys.
 
     On first run: try the interactive wizard (needs a real tty).
     If the wizard can't run (no tty, CI, hook subprocess), fall back
     to writing the defaults silently so the rest of the plugin works.
+
+    On subsequent runs: backfill any keys added since the config was
+    first written (e.g. shadow_update, vscode_wait) so they are always
+    present with their default values.
     """
-    if CONFIG_PATH.exists():
+    if not CONFIG_PATH.exists():
+        try:
+            _run_setup_wizard()
+        except Exception:
+            pass
+        # If the wizard didn't create the file (no tty available), write defaults.
+        if not CONFIG_PATH.exists():
+            CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            CONFIG_PATH.write_text(json.dumps(_DEFAULTS, indent=2))
+            sys.stderr.write("[diff-review] Config created with defaults.\n")
         return
+
+    # Config exists — backfill any missing keys silently.
     try:
-        _run_setup_wizard()
+        config = json.loads(CONFIG_PATH.read_text())
+        missing = {k: v for k, v in _DEFAULTS.items() if k not in config}
+        if missing:
+            config.update(missing)
+            CONFIG_PATH.write_text(json.dumps(config, indent=2))
+            sys.stderr.write(
+                f"[diff-review] Config updated with new defaults: "
+                f"{', '.join(missing)}\n"
+            )
     except Exception:
         pass
-    # If the wizard didn't create the file (no tty available), write defaults.
-    if not CONFIG_PATH.exists():
-        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        CONFIG_PATH.write_text(json.dumps(_DEFAULTS, indent=2))
-        sys.stderr.write("[diff-review] Config created with defaults.\n")
 
 
 def main():
